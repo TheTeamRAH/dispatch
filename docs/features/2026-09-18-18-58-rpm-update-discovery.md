@@ -2,7 +2,7 @@
 type: feature-specification
 title: RPM update discovery dashboard
 description: Define Dispatch's first read-only terminal workflow for inspecting pending RPM updates across SSH targets.
-status: proposed
+status: in_progress
 tags:
   - dispatch
   - tui
@@ -24,6 +24,21 @@ sources:
   - id: dnf-command-reference
     title: DNF command reference
     url: https://dnf.readthedocs.io/en/latest/command_ref.html
+  - id: textual-testing-guide
+    title: Textual testing guide
+    url: https://textual.textualize.io/guide/testing/
+  - id: textual-resize-event
+    title: Textual Resize event reference
+    url: https://textual.textualize.io/api/events/#textual.events.Resize
+  - id: asyncssh-api
+    title: AsyncSSH API documentation
+    url: https://asyncssh.readthedocs.io/en/latest/api.html
+  - id: uv-projects-guide
+    title: uv project guide
+    url: https://docs.astral.sh/uv/guides/projects/
+  - id: xdg-basedir-specification
+    title: XDG Base Directory Specification
+    url: https://specifications.freedesktop.org/basedir/latest/
 ---
 
 # RPM update discovery dashboard
@@ -38,6 +53,11 @@ Today this information requires connecting to individual systems and running pac
 [^agents-md]: [Repository agent guidance](../../AGENTS.md)
 [^readme-md]: [Dispatch repository overview](../../README.md)
 [^dnf-command-reference]: [DNF command reference](https://dnf.readthedocs.io/en/latest/command_ref.html)
+[^textual-testing-guide]: [Textual testing guide](https://textual.textualize.io/guide/testing/)
+[^textual-resize-event]: [Textual Resize event reference](https://textual.textualize.io/api/events/#textual.events.Resize)
+[^asyncssh-api]: [AsyncSSH API documentation](https://asyncssh.readthedocs.io/en/latest/api.html)
+[^uv-projects-guide]: [uv project guide](https://docs.astral.sh/uv/guides/projects/)
+[^xdg-basedir-specification]: [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/latest/)
 
 ## Goal
 
@@ -139,6 +159,18 @@ R26. The initial menu, target selection, authentication prompts, summaries, pack
 
 R27. A resize during an active workflow must preserve the current workflow state: selected targets, typed but unsubmitted non-secret input, current focus, completed results, in-progress batch status, and the operator's place in a scrollable view. Masked secret input must remain masked and must not be copied into other UI state.
 
+R28. Dispatch must implement the v1 TUI with Textual. TUI tests must use `pytest` with `pytest-asyncio`; visual viewport regressions must be covered with `pytest-textual-snapshot`. Textual provides headless interaction testing, configurable test terminal sizes, and snapshot testing suitable for R25-R27.[^textual-testing-guide] Textual's `Resize` event supplies updated terminal dimensions for responsive layout handling.[^textual-resize-event]
+
+R29. Dispatch must use AsyncSSH, not an `ssh` subprocess, for v1 transport. It must load the user's `~/.ssh/config` and known-hosts data, attempt the SSH agent and configured/default keys before requesting a password, and retain the authenticated preflight connection for discovery. AsyncSSH supports loading OpenSSH client configuration and opening a command channel after authentication.[^asyncssh-api]
+
+R30. Read-only remote behavior permits package-manager metadata refreshes, downloads, cache writes, and read-only RPM database queries. It prohibits RPM transactions; writes to package-manager configuration, repository configuration, or trust data; and lifecycle operations. Dispatch must not use `--cacheonly`, `--refresh`, `makecache`, `clean`, `install`, `upgrade`, `remove`, `reboot`, or `shutdown`.
+
+R31. Cancelling a batch must stop launch of unstarted preflight and discovery work, close active SSH connections and command channels, and persist the resulting run. Each selected target must retain its terminal result or be recorded as `cancelled`; targets deliberately bypassed after a retry decision remain `skipped`.
+
+R32. The required responsive test viewports are `40x20` cells (narrow), `80x24` cells (conventional), and `120x40` cells (desktop). Every resize workflow test must transition `120x40 -> 40x20 -> 120x40`.
+
+R33. Dispatch must initialize as a uv-managed Python project using `pyproject.toml`, `.python-version`, committed `uv.lock`, source under `src/dispatch/`, tests under `tests/`, and a `dispatch` console script. The project must declare Python 3.11 or newer, Textual, AsyncSSH, `pytest`, `pytest-asyncio`, and `pytest-textual-snapshot`. uv manages project metadata, environments, dependencies, and the lockfile.[^uv-projects-guide]
+
 ## Component contract
 
 The following interface-level boundaries are required so a new implementation context does not have to infer the extension model:
@@ -152,6 +184,39 @@ The following interface-level boundaries are required so a new implementation co
 | TUI workflow | Operator action plus component outcomes | The required prompts, summaries, details, batch progress, and history views. It must not parse raw package-manager output. |
 
 The normalized discovery result must carry the target identity, timestamp, outcome category, package details, security status and explanation, current reboot status and explanation, reboot forecast and explanation, and any safe-to-display error message. Providers must use the same result shape for successful, unknown, unsupported, skipped, and failed outcomes.
+
+### Concrete model and persistence contract
+
+All core model types must be frozen Python dataclasses and JSON-serializable without custom state. Timestamps must be UTC ISO 8601 strings with a `Z` suffix. `TargetSnapshot` contains `id` (nullable only for one-off targets), `name`, `ssh_destination`, and `provider`. A one-off target uses `id = null`, `name = ssh_destination`, and `provider = "rpm"`. `PackageUpdate` contains `name`, `architecture`, `installed_evr`, `candidate_evr`, `repository` (nullable), and `security_advisory_ids` (a possibly empty list). A package identity is its `(name, architecture)` pair.
+
+`Outcome` is exactly `success`, `unsupported`, `connection_failed`, `authentication_failed`, `host_untrusted`, `host_key_mismatch`, `discovery_failed`, `skipped`, or `cancelled`. `SecurityState` is exactly `known` or `unknown`; a known state contains a non-negative count and an unknown state contains a non-empty explanation. `CurrentRebootState` is exactly `required`, `not_required`, or `unknown`. `RebootForecast` is exactly `likely`, `not_indicated`, or `unknown`. Every unknown, unsupported, skipped, cancelled, and failed state has a non-empty safe-to-display explanation. `TargetResult` contains all of these fields plus `target`, `discovered_at`, and `packages`; packages are non-empty only for `success`. `InspectionRun` contains schema version `1`, an opaque UUID `run_id`, `started_at`, `completed_at`, and an ordered list of `TargetResult` values.
+
+The target-registry interface exposes `load()`, `save(target)`, `edit(target)`, and `remove(id)`. The transport interface exposes `connect(target, password_provider) -> AuthenticatedChannel | TransportFailure`, `run(channel, command) -> CompletedCommand`, and `close(channel)`. `command` is the complete fixed shell command from the RPM command table, including its `LC_ALL=C` prefix; `run()` must not accept a caller-supplied environment. The provider exposes `discover(target, channel) -> TargetResult`. The history interface exposes `append(run)` and `list_runs() -> list[InspectionRun]`. Only the TUI invokes these interfaces; providers never write registry or history data.
+
+Persist each completed operator-invoked inspection, including a run in which every target fails, is skipped, or is cancelled. Invalid unsubmitted input and a dismissed one-off prompt do not create history. Store each run as `$XDG_STATE_HOME/dispatch/history/<completed-at>-<run-id>.json`, write it atomically with file mode `0600`, and create new state/configuration directories with mode `0700`. List valid records newest first. Ignore malformed history documents without rewriting them and display a local warning. The XDG specification defines the defaults for configuration and persistent state paths and directs applications to create missing write destinations with mode `0700`.[^xdg-basedir-specification]
+
+Reject malformed TOML, an unsupported registry version, non-string required fields, invalid provider values, or duplicate/empty IDs without altering the registry. Names and destinations need not be unique. Preserve target order and all unknown top-level and per-target fields when rewriting a valid registry. A destination is one non-empty token with no whitespace or control characters; pass it only as structured transport input, never through a shell.
+
+### RPM command contract
+
+The provider must execute fixed command strings through the authenticated channel with `LC_ALL=C` and `--color=never`; it must not interpolate target input, passwords, or package data. It first runs `command -v dnf || command -v yum`. Prefer `dnf` when both paths are returned. The selected executable is supported only when all commands in this table succeed with the stated output contract; otherwise report the affected datum as `Unknown` or the provider as `unsupported`, never fabricate a zero value.
+
+| Purpose | Fixed command | Success interpretation |
+| --- | --- | --- |
+| Tool detection | `LC_ALL=C command -v dnf || command -v yum` | The first returned path selects the tool; no returned path is `unsupported`. |
+| Available updates | `LC_ALL=C <tool> -q --color=never check-update` | Exit `0` means no updates; exit `100` means the printed package rows are updates; any other exit is `discovery_failed`. DNF documents these exit values.[^dnf-command-reference] |
+| Installed EVRs | `LC_ALL=C rpm -qa --qf '%{NAME}\t%{EPOCHNUM}:%{VERSION}-%{RELEASE}\t%{ARCH}\n'` | Exit `0`; correlate rows to update package `(name, architecture)` identities. Missing correlation makes that target `discovery_failed`. |
+| Security advisories | `LC_ALL=C <tool> -q --color=never updateinfo list updates security` | Exit `0`; correlate advisory package rows to pending package identities. Missing command, unsupported output, or uncorrelatable metadata is `SecurityState.unknown`, not zero. |
+| Current reboot | `LC_ALL=C <tool> needs-restarting -r` | Exit `0` is `not_required`, exit `1` is `required`; missing command or any other exit is `unknown`. |
+
+The update-row parser accepts only the locale-C `check-update` grammar `name.architecture whitespace candidate_evr whitespace repository`; banner and blank lines are ignored. A parse failure on a non-blank candidate row is `discovery_failed`. The security parser accepts only locale-C rows in the grammar `advisory_id whitespace severity_or_type whitespace package_name-candidate_evr.architecture`, for example:
+
+```text
+RHSA-2026:1234 Important/Sec. kernel-core-5.14.0-600.el9_7.x86_64
+RHSA-2026:1234 Important/Sec. kernel-modules-5.14.0-600.el9_7.x86_64
+```
+
+`advisory_id` is the first whitespace-delimited token. The parser must match a pending package using the longest pending `package_name` followed by `-`, and then require the final suffix to equal `.<architecture>`; it adds that identifier to the matched package's `security_advisory_ids`. A malformed non-blank advisory row, a row whose package cannot be matched, or no usable advisory rows when updates exist makes security `Unknown`; it does not fail package discovery. These example rows and no-update, malformed, unmatched, and multiple-advisory variants must be captured as fixture files before provider parsing is implemented. A `yum` executable is v1-compatible only when it implements this same contract; no separate legacy-YUM parsing is in scope.
 
 The initial target registry has this required shape:
 
@@ -203,9 +268,15 @@ provider = "rpm"
 
 ## Implementation notes
 
-These are implementation constraints, not a commitment to a particular TUI or SSH library.
+These are implementation constraints, including the agreed TUI and SSH frameworks.
 
 - Keep the initial component contracts narrow: a transport establishes an authenticated channel, a provider produces the normalized discovery result, stores persist local data, and the TUI invokes those components.
+- Use Textual for all v1 TUI screens and workflows. Treat its `Resize` events as view-layer events; retain workflow state independently of widget layout so reflow cannot create a duplicate discovery operation. Use `pytest` and `pytest-asyncio` for TUI interactions, and `pytest-textual-snapshot` for visual regression coverage at narrow and conventional terminal sizes.
+- Create the uv project with `uv init --package`, keep generated project metadata relevant to Dispatch, add dependencies with `uv add`, add test dependencies with `uv add --dev`, and commit the generated `uv.lock`. The executable entry point is `dispatch = "dispatch:main"`.
+- Implement the AsyncSSH transport with normal OpenSSH client configuration and known-host validation. Never invoke an interactive `ssh` subprocess. Preflight retains one authenticated channel per target; discovery uses that channel and a closed retained channel becomes `connection_failed` without an automatic re-prompt.
+- Implement an explicit UI-mediated password-provider coroutine. It may be called only after normal key/agent authentication is denied and host identity verification has passed. Clear its secret value immediately after the connection attempt, including on exceptions and cancellation.
+- Store each normalized `InspectionRun` as specified above. Do not serialize command stdout/stderr, Python exceptions, or any secret; map diagnostics to the safe display explanation in `TargetResult`.
+- Treat the RPM command table as the complete v1 remote-command allowlist. Remote metadata/cache writes are permitted; every command outside that table is prohibited.
 - Invoke package-manager and reboot-check commands in read-only forms only. Command parsing should be isolated behind the RPM provider so fixture tests can exercise supported output and error cases without SSH.
 - The RPM provider must first determine whether `dnf` or `yum` is available, then use that tool's non-mutating update and advisory queries. It must classify command absence, unavailable repository metadata, parse failures, and unsupported commands as explicit normalized states rather than allowing raw command output to leak into the TUI.
 - `dnf` takes precedence over `yum` when both commands are available. Implement the RPM provider's command parsing with captured fixtures; do not rely on the user's current locale or terminal colour settings for a stable result.
@@ -229,9 +300,25 @@ Implementation must follow test-driven development: write each test before the p
 - Tests for batch-preflight outcomes covering retry, skip, and cancel choices, including history records for skipped and failed targets.
 - Tests for password-prompt handling proving input is masked in the UI model and excluded from configuration, history, diagnostic output, and exceptions.
 - Tests for SSH trust decisions proving mismatched keys fail and an untrusted host is rejected without Dispatch writing a trust record.
+- Tests for transport configuration proving AsyncSSH receives the user's OpenSSH configuration and known-host paths, tries key/agent authentication before the password callback, retains a preflight channel for discovery, and closes that channel on cancellation.
+- Tests for the exact RPM command allowlist, locale/color options, exit-code mapping, parser grammar, and `yum` compatibility boundary.
+- Tests for JSON history schema/version, atomic owner-only writes, malformed-record handling, cancellation persistence, and the no-history cases for abandoned input.
 - TUI-level tests for idle-on-open behaviour, explicit invocation of discovery, summary/detail toggling, and history viewing without a new connection.
 - TUI-level tests that render every v1 screen in a narrow terminal viewport and verify all actions/data remain reachable through reflow, detail, or scrolling.
 - TUI-level tests that resize each active v1 workflow from a conventional terminal to a narrow viewport and back, verifying no duplicate connection/query is created and the state required by R27 is retained.
+- TUI snapshot tests at `40x20`, `80x24`, and `120x40`; resize tests must use `120x40 -> 40x20 -> 120x40`.
+
+### Validation commands and evidence
+
+Run all implementation and test commands through uv:
+
+```bash
+uv sync --all-groups
+uv run pytest
+uv run dispatch
+```
+
+For every production behavior, first add its targeted test and run `uv run pytest <test-path>::<test-name>` before implementation. Record the command and its expected failing result in the implementation handoff or pull-request description, then rerun the identical command after the smallest implementation change and record its passing result. Run `uv run pytest` before declaring completion. Generate or update a snapshot only after visual review with `uv run pytest --snapshot-update`; rerun `uv run pytest` afterward to verify the committed baseline.
 
 ### Manual validation
 
@@ -257,6 +344,8 @@ The feature is complete when all of the following are true:
 7. No feature path performs a mutating remote operation.
 8. The automated tests and manual validation above pass, including the required failing-test-first evidence for newly implemented behaviours.
 9. Every v1 screen is usable in a narrow phone-terminal viewport and reflows correctly when the terminal is resized at launch or during an active session, without losing workflow state or starting a duplicate operation.
+10. The `dispatch` package, console script, uv lockfile, and required validation commands exist and the full `uv run pytest` suite passes.
+11. The exact persistence, transport, RPM-command, cancellation, and viewport contracts in this specification are implemented and covered by automated tests.
 
 ## Risks and mitigations
 
@@ -271,7 +360,13 @@ The feature is complete when all of the following are true:
 
 ## Amendments
 
+- The product owner requested lower-friction saved-target and target-management interaction on 2026-09-18: saved-target inspection must use an in-TUI selectable list rather than manually typed target IDs, and target management must present explicit actions rather than a command grammar.
+- The product owner requested visible saved-target context in target management and a remove-all-saved-targets action on 2026-09-18. Remove-all must require the operator to type `DELETE`; existing history remains intact.
+- The product owner selected a fixed 15-second SSH preflight connection timeout on 2026-09-18. Expiry is a connection failure and presents retry, skip, and cancel choices.
+- The product owner requested expanded Git ignore coverage for common generated, editor, operating-system, Python, test, and local Dispatch runtime files on 2026-09-18.
 - The product owner added responsive terminal support on 2026-09-18: Dispatch must adapt to phone, conventional terminal, and foldable-phone viewports both at launch and after mid-session resize events.
+- The product owner selected Textual with `pytest`, `pytest-asyncio`, and `pytest-textual-snapshot` on 2026-09-18.
+- The product owner selected AsyncSSH, current-metadata queries with permitted cache writes, persisted cancellation results, DNF-first/YUM-compatible command support, and a uv-managed project on 2026-09-18.
 
 ## Sources
 
@@ -279,3 +374,8 @@ The feature is complete when all of the following are true:
 - [Repository agent guidance](../../AGENTS.md)
 - [Dispatch repository overview](../../README.md)
 - [DNF command reference](https://dnf.readthedocs.io/en/latest/command_ref.html)
+- [Textual testing guide](https://textual.textualize.io/guide/testing/)
+- [Textual Resize event reference](https://textual.textualize.io/api/events/#textual.events.Resize)
+- [AsyncSSH API documentation](https://asyncssh.readthedocs.io/en/latest/api.html)
+- [uv project guide](https://docs.astral.sh/uv/guides/projects/)
+- [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/latest/)
