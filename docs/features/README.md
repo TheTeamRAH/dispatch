@@ -11,4 +11,6 @@ sources:
 
 # Feature specifications
 
-No feature specifications have been recorded yet.
+| Date | Purpose | Spec | Author |
+| --- | --- | --- | --- |
+| 2026-09-18-18-58 | RPM update discovery dashboard | [Spec](2026-09-18-18-58-rpm-update-discovery.md) | OpenCode |

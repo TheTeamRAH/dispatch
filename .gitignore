@@ -2,6 +2,11 @@
 .idea/
 .vscode/
 .fleet/
+.zed/
+.nova/
+.history/
+.project
+.settings/
 *.iml
 *.swp
 *.swo
@@ -11,25 +16,41 @@
 .DS_Store
 Thumbs.db
 Desktop.ini
+$RECYCLE.BIN/
+.Spotlight-V100/
+.Trashes/
 
 # Local configuration and secrets
 .env
 .env.*
 !.env.example
 !.env.*.example
+.direnv/
+.python-version.local
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Python environments, caches, and test artifacts
 .venv/
 venv/
 env/
+.tox/
+.nox/
+__pypackages__/
 __pycache__/
 *.py[cod]
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.pyright/
+.hypothesis/
+.coverage.*
 .coverage
 coverage.xml
 htmlcov/
+snapshot_report.html
 
 # Build and packaging artifacts
 build/
@@ -41,3 +62,8 @@ dist/
 *.pid
 *.sqlite3
 *.db
+*.pid.lock
+
+# Local Dispatch runtime state
+.dispatch/
+dispatch-history/
