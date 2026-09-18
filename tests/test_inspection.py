@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import pytest
 
 from dispatch.inspection import InspectionService
-from dispatch.models import Outcome, TargetSnapshot
+from dispatch.models import Outcome, TargetResult, TargetSnapshot
 from dispatch.transport import FailureKind, TransportFailure
 
 
@@ -46,6 +46,31 @@ class BlockingProvider:
         self.started = __import__("asyncio").Event()
 
     async def discover(self, target, channel):
+        self.started.set()
+        await __import__("asyncio").Event().wait()
+
+
+class StagedProvider:
+    def __init__(self) -> None:
+        import asyncio
+
+        self.first_complete = asyncio.Event()
+        self.release_second = asyncio.Event()
+
+    async def discover(self, target, channel):
+        if target.id == "two":
+            await self.release_second.wait()
+        else:
+            self.first_complete.set()
+        return TargetResult(target, "2026-09-18T00:00:00Z", Outcome.UNSUPPORTED, explanation="Unsupported.")
+
+
+class BlockingPreflightTransport(Transport):
+    def __init__(self) -> None:
+        super().__init__([])
+        self.started = __import__("asyncio").Event()
+
+    async def connect(self, target, password_provider):
         self.started.set()
         await __import__("asyncio").Event().wait()
 
@@ -113,3 +138,39 @@ async def test_task_cancellation_closes_channels_and_persists_cancelled_results(
         await task
     assert history.runs[0].results[0].outcome is Outcome.CANCELLED
     assert transport.closed == [target]
+
+
+@pytest.mark.asyncio
+async def test_preflight_cancellation_persists_cancelled_results() -> None:
+    import asyncio
+
+    target = TargetSnapshot("one", "One", "one@host")
+    transport = BlockingPreflightTransport()
+    history = History()
+    task = asyncio.create_task(InspectionService(transport, history).inspect([target], no_password, lambda target, failure: "skip"))
+    await transport.started.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert history.runs[0].results[0].outcome is Outcome.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_discovery_reports_each_result_before_the_batch_finishes() -> None:
+    import asyncio
+
+    first = TargetSnapshot("one", "One", "one@host")
+    second = TargetSnapshot("two", "Two", "two@host")
+    provider = StagedProvider()
+    reported = []
+    service = InspectionService(Transport([object(), object()]), History(), provider)
+
+    task = asyncio.create_task(service.inspect([first, second], no_password, lambda target, failure: "skip", reported.append))
+    await provider.first_complete.wait()
+    await asyncio.sleep(0.01)
+
+    assert [result.target.id for result in reported] == ["one"]
+    assert not task.done()
+    provider.release_second.set()
+    await task

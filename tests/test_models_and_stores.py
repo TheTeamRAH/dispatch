@@ -44,6 +44,21 @@ def test_unknown_and_failures_require_explanations() -> None:
         TargetResult(target(), "2026-09-18T18:58:00Z", Outcome.UNSUPPORTED)
 
 
+def test_unknown_reboot_states_require_safe_explanations() -> None:
+    with pytest.raises(ValueError):
+        TargetResult(
+            target(), "2026-09-18T18:58:00Z", Outcome.SUCCESS,
+            current_reboot=CurrentRebootState.UNKNOWN, reboot_forecast=RebootForecast.NOT_INDICATED,
+            current_reboot_explanation=None,
+        )
+    with pytest.raises(ValueError):
+        TargetResult(
+            target(), "2026-09-18T18:58:00Z", Outcome.SUCCESS,
+            current_reboot=CurrentRebootState.NOT_REQUIRED, reboot_forecast=RebootForecast.UNKNOWN,
+            reboot_forecast_explanation=None,
+        )
+
+
 def test_registry_round_trips_and_preserves_unknown_fields(tmp_path) -> None:
     path = tmp_path / "config" / "targets.toml"
     path.parent.mkdir()

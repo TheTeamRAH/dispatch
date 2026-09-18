@@ -136,5 +136,10 @@ class HistoryStore:
             target = TargetSnapshot(**item["target"])
             packages = tuple(PackageUpdate(**{**package, "security_advisory_ids": tuple(package["security_advisory_ids"])} ) for package in item["packages"])
             security = SecurityState(**item["security_state"])
-            results.append(TargetResult(target, item["discovered_at"], Outcome(item["outcome"]), packages, security, CurrentRebootState(item["current_reboot"]), RebootForecast(item["reboot_forecast"]), item["explanation"]))
+            results.append(TargetResult(
+                target, item["discovered_at"], Outcome(item["outcome"]), packages, security,
+                CurrentRebootState(item["current_reboot"]), RebootForecast(item["reboot_forecast"]),
+                item["explanation"], item.get("current_reboot_explanation", "Current reboot requirement could not be determined."),
+                item.get("reboot_forecast_explanation", "Post-update reboot impact could not be determined."),
+            ))
         return InspectionRun(data["run_id"], data["started_at"], data["completed_at"], tuple(results), data["schema_version"])

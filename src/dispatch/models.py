@@ -86,12 +86,18 @@ class TargetResult:
     current_reboot: CurrentRebootState = CurrentRebootState.UNKNOWN
     reboot_forecast: RebootForecast = RebootForecast.UNKNOWN
     explanation: str | None = None
+    current_reboot_explanation: str | None = "Current reboot requirement could not be determined."
+    reboot_forecast_explanation: str | None = "Post-update reboot impact could not be determined."
 
     def __post_init__(self) -> None:
         if self.outcome is not Outcome.SUCCESS and not self.explanation:
             raise ValueError("non-success outcomes require an explanation")
         if self.outcome is not Outcome.SUCCESS and self.packages:
             raise ValueError("only successful results may contain packages")
+        if self.current_reboot is CurrentRebootState.UNKNOWN and not self.current_reboot_explanation:
+            raise ValueError("unknown current reboot state requires an explanation")
+        if self.reboot_forecast is RebootForecast.UNKNOWN and not self.reboot_forecast_explanation:
+            raise ValueError("unknown reboot forecast requires an explanation")
 
     def to_dict(self) -> dict:
         return json.loads(json.dumps(asdict(self)))

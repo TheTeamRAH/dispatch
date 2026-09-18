@@ -2,7 +2,7 @@
 type: feature-specification
 title: RPM update discovery dashboard
 description: Define Dispatch's first read-only terminal workflow for inspecting pending RPM updates across SSH targets.
-status: in_progress
+status: completed
 tags:
   - dispatch
   - tui
@@ -367,6 +367,8 @@ The feature is complete when all of the following are true:
 - The product owner added responsive terminal support on 2026-09-18: Dispatch must adapt to phone, conventional terminal, and foldable-phone viewports both at launch and after mid-session resize events.
 - The product owner selected Textual with `pytest`, `pytest-asyncio`, and `pytest-textual-snapshot` on 2026-09-18.
 - The product owner selected AsyncSSH, current-metadata queries with permitted cache writes, persisted cancellation results, DNF-first/YUM-compatible command support, and a uv-managed project on 2026-09-18.
+- Closeout blockers identified by the product owner on 2026-09-18: batch discovery must report each target result to the TUI at completion rather than only after all discovery tasks finish; the progress view must provide a cancellation control that cancels the active workflow and persists cancelled results; `TargetResult` and RPM discovery must carry safe explanations whenever current reboot status or reboot forecast is `unknown`; history must allow an operator to open persisted runs and inspect per-target summaries and package details without a remote query; and Textual snapshot coverage should cover the remaining practical v1 views and required resize sequence.
+- The product owner requested expanded `pytest-textual-snapshot` coverage on 2026-09-18: capture every practical v1 view (menu, one-off form, saved-target selection including empty state, target management, history and history detail, summary and package detail, progress with cancellation control, and password, preflight-failure, and remove-all prompts) at `40x20`, `80x24`, and `120x40`; exercise `120x40 -> 40x20 -> 120x40` resize flows and prove retained state does not trigger duplicate inspection work.
 
 ## Sources
 

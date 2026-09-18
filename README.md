@@ -8,6 +8,7 @@ A modular terminal user interface for dispatching infrastructure operations.
 .
 ├── AGENTS.md          # Repository working instructions
 ├── docs/
+│   ├── discovery/     # Reusable implementation lessons
 │   └── features/      # Feature specifications and their index
 ├── pyproject.toml     # uv-managed Python project metadata
 ├── src/dispatch/      # Dispatch application package

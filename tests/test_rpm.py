@@ -45,6 +45,8 @@ async def test_dnf_updates_are_success_and_security_is_correlated() -> None:
 async def test_no_supported_tool_is_not_zero_updates() -> None:
     result = await RpmProvider().discover(TargetSnapshot(None, "host", "admin@host"), Channel([CompletedCommand(1, "")]))
     assert result.outcome is Outcome.UNSUPPORTED
+    assert result.current_reboot_explanation
+    assert result.reboot_forecast_explanation
 
 
 @pytest.mark.asyncio

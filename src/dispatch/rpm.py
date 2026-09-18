@@ -43,7 +43,11 @@ class RpmProvider:
         reboot = await channel.run(f"LC_ALL=C {tool} needs-restarting -r")
         current = CurrentRebootState.NOT_REQUIRED if reboot.exit_status == 0 else CurrentRebootState.REQUIRED if reboot.exit_status == 1 else CurrentRebootState.UNKNOWN
         forecast = RebootForecast.LIKELY if any(package.name == "kernel" or package.name.startswith("kernel-") for package in packages) else RebootForecast.NOT_INDICATED
-        return TargetResult(target, timestamp, Outcome.SUCCESS, tuple(packages), security, current, forecast)
+        return TargetResult(
+            target, timestamp, Outcome.SUCCESS, tuple(packages), security, current, forecast,
+            current_reboot_explanation=("The package manager could not determine whether a reboot is currently required." if current is CurrentRebootState.UNKNOWN else None),
+            reboot_forecast_explanation=None,
+        )
 
     @staticmethod
     def _result(target, timestamp, outcome, explanation):
