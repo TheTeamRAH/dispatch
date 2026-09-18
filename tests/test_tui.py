@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from textual.containers import VerticalScroll
 from textual.widgets import Static
 from textual.widgets import Button, Input, SelectionList
 
@@ -69,6 +70,19 @@ async def test_history_view_reads_local_store_without_starting_discovery() -> No
 
 
 @pytest.mark.asyncio
+async def test_history_run_exposes_persisted_target_summary_and_details() -> None:
+    app = DispatchApp(history_store=History())
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("h")
+        await pilot.click("#history-run-0")
+        assert "operator@node: success" in displayed(app)
+        await pilot.press("d")
+        assert "kernel.x86_64" in displayed(app)
+        assert app.discovery_started is False
+
+
+@pytest.mark.asyncio
 async def test_summary_detail_toggle_and_resize_preserve_result() -> None:
     app = DispatchApp(results=[result()])
 
@@ -104,12 +118,35 @@ class BlockingInspector(Inspector):
     def __init__(self) -> None:
         self.started = __import__("asyncio").Event()
         self.release = __import__("asyncio").Event()
+        self.calls = 0
 
     async def inspect(self, targets, password_provider, failure_decider):
+        self.calls += 1
         self.targets = targets
         self.started.set()
         await self.release.wait()
         return type("Run", (), {"results": [result()]})()
+
+
+class CancellableInspector(Inspector):
+    def __init__(self) -> None:
+        import asyncio
+
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+
+    async def inspect(self, targets, password_provider, failure_decider, on_result=None):
+        import asyncio
+
+        self.targets = targets
+        self.started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            if on_result is not None:
+                on_result(TargetResult(targets[0], "2026-09-18T18:59:00Z", Outcome.CANCELLED, explanation="Inspection batch was cancelled."))
+            raise
 
 
 class Registry:
@@ -242,6 +279,35 @@ async def test_one_off_submission_immediately_shows_progress() -> None:
 
 
 @pytest.mark.asyncio
+async def test_new_inspection_clears_previous_results_during_progress() -> None:
+    inspector = BlockingInspector()
+    app = DispatchApp(results=[result()], inspection_service=inspector)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("o")
+        await pilot.press(*"admin@rocky", "enter")
+        await inspector.started.wait()
+        assert app.results == []
+        inspector.release.set()
+
+
+@pytest.mark.asyncio
+async def test_progress_exposes_batch_cancellation_and_renders_cancelled_result() -> None:
+    inspector = CancellableInspector()
+    app = DispatchApp(inspection_service=inspector)
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("o")
+        await pilot.press(*"admin@rocky", "enter")
+        await inspector.started.wait()
+        assert app.query_one("#cancel-inspection", Button).label == "Cancel batch"
+        await pilot.click("#cancel-inspection")
+        await inspector.cancelled.wait()
+        await pilot.pause()
+        assert app.view == "summary"
+        assert "cancelled" in displayed(app)
+
+
+@pytest.mark.asyncio
 async def test_preflight_failure_prompt_offers_explicit_decisions() -> None:
     app = DispatchApp()
     failure = TransportFailure(FailureKind.AUTHENTICATION, "Access denied.")
@@ -253,6 +319,186 @@ async def test_preflight_failure_prompt_offers_explicit_decisions() -> None:
         assert app.screen.query_one("#cancel").label == "Cancel batch"
 
 
+class SnapshotDispatchApp(DispatchApp):
+    """Open an interactive view before the snapshot is captured."""
+
+    def __init__(self, snapshot_view: str) -> None:
+        super().__init__(results=[result()], history_store=History(), registry=Registry())
+        self.snapshot_view = snapshot_view
+
+    async def on_mount(self) -> None:
+        if self.snapshot_view == "one_off":
+            await self.action_one_off()
+        elif self.snapshot_view in {"saved", "manage", "history"}:
+            await getattr(self, f"action_{self.snapshot_view}")()
+        elif self.snapshot_view == "saved_empty":
+            self.registry.targets = []
+            await self.action_saved()
+        elif self.snapshot_view == "history_detail":
+            self.history_run = self.history_store.list_runs()[0]
+            self.view = "history_detail"
+            self._refresh()
+        elif self.snapshot_view == "package_detail":
+            self.show_details = True
+            self._refresh()
+        elif self.snapshot_view == "progress":
+            self.view = "progress"
+            self._refresh()
+            await self.query_one("#content", VerticalScroll).mount(
+                Button("Cancel batch", id="cancel-inspection", classes="form-control")
+            )
+        elif self.snapshot_view == "password":
+            self.push_screen(PasswordPrompt(TargetSnapshot(None, "host", "admin@host")))
+        elif self.snapshot_view == "preflight":
+            failure = TransportFailure(FailureKind.AUTHENTICATION, "Access denied.")
+            self.push_screen(PreflightFailurePrompt(TargetSnapshot(None, "host", "admin@host"), failure))
+        elif self.snapshot_view == "remove_all":
+            self.push_screen(RemoveAllTargetsPrompt())
+
+
 @pytest.mark.parametrize("size", [(40, 20), (80, 24), (120, 40)])
 def test_initial_menu_viewport_snapshot(snap_compare, size) -> None:
     assert snap_compare(DispatchApp(), terminal_size=size)
+
+
+@pytest.mark.parametrize("size", [(40, 20), (80, 24), (120, 40)])
+@pytest.mark.parametrize("view", ["summary", "progress", "history"])
+def test_static_v1_viewport_snapshot(snap_compare, size, view) -> None:
+    app = DispatchApp(results=[result()], history_store=History())
+    app.view = view
+    if view == "history":
+        app.history_runs = app.history_store.list_runs()
+    assert snap_compare(app, terminal_size=size)
+
+
+@pytest.mark.parametrize("size", [(40, 20), (80, 24), (120, 40)])
+@pytest.mark.parametrize(
+    "view",
+    [
+        "one_off",
+        "saved",
+        "saved_empty",
+        "manage",
+        "history",
+        "history_detail",
+        "package_detail",
+        "progress",
+        "password",
+        "preflight",
+        "remove_all",
+    ],
+)
+def test_interactive_v1_viewport_snapshot(snap_compare, size, view) -> None:
+    assert snap_compare(SnapshotDispatchApp(view), terminal_size=size)
+
+
+@pytest.mark.asyncio
+async def test_resize_one_off_form_preserves_typed_destination_and_focus() -> None:
+    app = DispatchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("o")
+        await pilot.press(*"admin@rocky")
+        destination = app.query_one("#ssh-destination", Input)
+        assert app.focused is destination
+        await pilot.resize_terminal(40, 20)
+        await pilot.resize_terminal(120, 40)
+        assert destination.value == "admin@rocky"
+        assert app.focused is destination
+
+
+@pytest.mark.asyncio
+async def test_resize_saved_selection_and_empty_state_preserve_view_state() -> None:
+    app = DispatchApp(registry=Registry())
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("s")
+        selector = app.query_one("#saved-targets", SelectionList)
+        selector.select("two")
+        await pilot.resize_terminal(40, 20)
+        await pilot.resize_terminal(120, 40)
+        assert selector.selected == ["two"]
+
+    empty_registry = Registry()
+    empty_registry.targets = []
+    empty_app = DispatchApp(registry=empty_registry)
+    async with empty_app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("s")
+        await pilot.resize_terminal(40, 20)
+        await pilot.resize_terminal(120, 40)
+        assert empty_app.view == "saved"
+        assert "No saved targets" in displayed(empty_app)
+
+
+@pytest.mark.asyncio
+async def test_resize_management_and_history_detail_preserve_state() -> None:
+    management_app = DispatchApp(registry=Registry())
+    async with management_app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("m")
+        await pilot.press(*"db")
+        target_id = management_app.query_one("#target-id", Input)
+        await pilot.resize_terminal(40, 20)
+        await pilot.resize_terminal(120, 40)
+        assert target_id.value == "db"
+        assert management_app.focused is target_id
+
+    history_app = DispatchApp(history_store=History())
+    async with history_app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("h")
+        await pilot.click("#history-run-0")
+        await pilot.pause()
+        await pilot.press("d")
+        await pilot.resize_terminal(40, 20)
+        await pilot.resize_terminal(120, 40)
+        assert history_app.view == "history_detail"
+        assert history_app.show_details is True
+        assert "kernel.x86_64" in displayed(history_app)
+
+
+@pytest.mark.asyncio
+async def test_resize_prompts_preserves_entered_input_and_screen() -> None:
+    app = DispatchApp()
+    async with app.run_test(size=(120, 40)) as pilot:
+        app.push_screen(PasswordPrompt(TargetSnapshot(None, "host", "admin@host")))
+        await pilot.pause()
+        password = app.screen.query_one("#password", Input)
+        await pilot.press(*"temporary")
+        await pilot.resize_terminal(40, 20)
+        await pilot.resize_terminal(120, 40)
+        assert isinstance(app.screen, PasswordPrompt)
+        assert password.value == "temporary"
+        assert password.password is True
+
+        app.pop_screen()
+        app.push_screen(RemoveAllTargetsPrompt())
+        await pilot.pause()
+        confirmation = app.screen.query_one("#remove-all-confirm", Input)
+        await pilot.press(*"DELETE")
+        await pilot.resize_terminal(40, 20)
+        await pilot.resize_terminal(120, 40)
+        assert isinstance(app.screen, RemoveAllTargetsPrompt)
+        assert confirmation.value == "DELETE"
+
+        app.pop_screen()
+        failure = TransportFailure(FailureKind.AUTHENTICATION, "Access denied.")
+        app.push_screen(PreflightFailurePrompt(TargetSnapshot(None, "host", "admin@host"), failure))
+        await pilot.pause()
+        await pilot.resize_terminal(40, 20)
+        await pilot.resize_terminal(120, 40)
+        assert isinstance(app.screen, PreflightFailurePrompt)
+        assert app.screen.query_one("#skip", Button).label == "Skip"
+
+
+@pytest.mark.asyncio
+async def test_resize_active_progress_preserves_work_and_does_not_duplicate_inspection() -> None:
+    inspector = BlockingInspector()
+    app = DispatchApp(inspection_service=inspector)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("o")
+        await pilot.press(*"admin@rocky", "enter")
+        await inspector.started.wait()
+        await pilot.resize_terminal(40, 20)
+        await pilot.resize_terminal(120, 40)
+        assert app.view == "progress"
+        assert inspector.calls == 1
+        assert inspector.targets[0].ssh_destination == "admin@rocky"
+        inspector.release.set()
+        await pilot.pause()

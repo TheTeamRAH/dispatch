@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
+import inspect
 from typing import Protocol
 
 from textual.app import App, ComposeResult
@@ -11,7 +13,7 @@ from textual.events import Resize
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, Input, Label, SelectionList, Static
 
-from .models import TargetResult
+from .models import CurrentRebootState, RebootForecast, TargetResult
 
 
 class HistoryReader(Protocol):
@@ -106,6 +108,8 @@ class DispatchApp(App[None]):
         self.discovery_started = False
         self.history_store = history_store
         self.history_runs: list[object] = []
+        self.history_run = None
+        self.inspection_worker = None
         self.inspection_service = inspection_service
         self.registry = registry
         self.saved_targets = []
@@ -155,10 +159,15 @@ class DispatchApp(App[None]):
         )
         self.set_focus(target_id)
 
-    def action_history(self) -> None:
+    async def action_history(self) -> None:
+        await self._clear_controls()
         self.view = "history"
         self.history_runs = self.history_store.list_runs() if self.history_store is not None else []
         self._refresh()
+        for index, run in enumerate(self.history_runs):
+            await self.query_one("#content", VerticalScroll).mount(
+                Button(f"View {run.completed_at}", id=f"history-run-{index}", classes="form-control")
+            )
 
     async def action_menu(self) -> None:
         await self._clear_controls()
@@ -166,7 +175,7 @@ class DispatchApp(App[None]):
         self._refresh()
 
     def action_toggle_details(self) -> None:
-        if self.results:
+        if self.results or self.history_run is not None:
             self.show_details = not self.show_details
             self._refresh()
 
@@ -187,6 +196,17 @@ class DispatchApp(App[None]):
         await self._start_inspection(targets)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "cancel-inspection":
+            if self.inspection_worker is not None:
+                self.inspection_worker.cancel()
+            return
+        if event.button.id and event.button.id.startswith("history-run-"):
+            self.history_run = self.history_runs[int(event.button.id.removeprefix("history-run-"))]
+            await self._clear_controls()
+            self.view = "history_detail"
+            self.show_details = False
+            self._refresh()
+            return
         if event.button.id == "remove-all-targets":
             self.run_worker(self._remove_all_targets(), exclusive=True)
             return
@@ -238,26 +258,49 @@ class DispatchApp(App[None]):
 
     async def _start_inspection(self, targets) -> None:
         self.discovery_started = True
+        self.results = []
         await self._clear_controls()
         self.view = "progress"
         self._refresh()
-        self.run_worker(self._inspect(targets), exclusive=True)
+        await self.query_one("#content", VerticalScroll).mount(
+            Button("Cancel batch", id="cancel-inspection", classes="form-control")
+        )
+        self.inspection_worker = self.run_worker(self._inspect(targets), exclusive=True)
 
     async def _clear_controls(self) -> None:
         for control in self.query(".form-control"):
             await control.remove()
 
     async def _inspect(self, targets) -> None:
-        run = await self.inspection_service.inspect(targets, self._password_not_available, self._skip_failure)
-        self.results = list(run.results)
-        self.view = "summary"
-        self._refresh()
+        method = self.inspection_service.inspect
+        arguments = (targets, self._password_not_available, self._skip_failure)
+        try:
+            if "on_result" in inspect.signature(method).parameters:
+                run = await method(*arguments, on_result=self._result_completed)
+            else:
+                run = await method(*arguments)
+        except asyncio.CancelledError:
+            self.view = "summary"
+            self._refresh()
+            raise
+        else:
+            self.results = list(run.results)
+            self.view = "summary"
+            self._refresh()
+        finally:
+            await self._clear_controls()
+            self.inspection_worker = None
 
     async def _password_not_available(self, target) -> str | None:
         return await self.push_screen_wait(PasswordPrompt(target))
 
     async def _skip_failure(self, target, failure) -> str:
         return await self.push_screen_wait(PreflightFailurePrompt(target, failure))
+
+    def _result_completed(self, result: TargetResult) -> None:
+        self.results.append(result)
+        if self.view == "progress":
+            self._refresh()
 
     def _refresh(self) -> None:
         self.query_one("#view", Static).update(self._content())
@@ -282,15 +325,18 @@ class DispatchApp(App[None]):
                 lines.append(f"{run.completed_at}: {len(run.results)} target(s)")
             lines.append("\nPress Esc to return to the menu.")
             return "\n".join(lines)
+        if self.view == "history_detail":
+            return self._summary(self.history_run.results, "Inspection history")
         if self.view == "progress":
-            return "Inspection in progress\n\nConnecting and querying the selected target(s). No remote changes will be made."
-        return self._summary()
+            return self._summary(self.results, "Inspection in progress") + "\n\nConnecting and querying the selected target(s). No remote changes will be made."
+        return self._summary(self.results)
 
-    def _summary(self) -> str:
-        if not self.results:
+    def _summary(self, results=None, title="Discovery summary") -> str:
+        results = self.results if results is None else results
+        if not results:
             return "Discovery summary\n\nNo completed target results."
-        lines = ["Discovery summary"]
-        for result in self.results:
+        lines = [title]
+        for result in results:
             lines.extend(
                 [
                     f"\n{result.target.name}: {result.outcome.value}",
@@ -302,6 +348,12 @@ class DispatchApp(App[None]):
                     f"Post-update reboot forecast: {result.reboot_forecast.value}",
                 ]
             )
+            if result.explanation:
+                lines.append(f"Result: {result.explanation}")
+            if result.current_reboot is CurrentRebootState.UNKNOWN:
+                lines.append(f"Current reboot detail: {result.current_reboot_explanation}")
+            if result.reboot_forecast is RebootForecast.UNKNOWN:
+                lines.append(f"Forecast detail: {result.reboot_forecast_explanation}")
             if self.show_details:
                 lines.append("Package details:")
                 lines.extend(
