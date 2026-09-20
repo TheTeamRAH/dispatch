@@ -2,6 +2,8 @@
 
 A modular terminal user interface for dispatching infrastructure operations.
 
+![Dispatch terminal interface](docs/images/dispatch.png)
+
 ## Repo Structure
 
 ```text
