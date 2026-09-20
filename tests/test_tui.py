@@ -82,7 +82,9 @@ async def test_small_terminal_uses_one_main_posting_panel_for_full_results() -> 
 
     async with app.run_test(size=(104, 27)):
         assert app.screen.has_class("-compact")
-        assert app.query_one("#content").region.width > app.size.width // 2
+        content = app.query_one("#content")
+        assert content.region.width > app.size.width // 2
+        assert content.region.bottom == app.size.height
         assert app.query_one("#status-pane").display is False
         assert app.query_one("#detail-pane").display is False
         assert "Pending updates: 1" in str(app.query_one("#view", Static).render())

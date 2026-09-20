@@ -87,7 +87,7 @@ class DispatchApp(App[None]):
     Screen { layout: vertical; background: #000000; color: #f0eaff; }
     Header { background: #000000; color: #f0eaff; }
     #workspace { height: 1fr; layout: vertical; padding: 1; }
-    #pane-area { width: 1fr; height: 100%; layout: horizontal; }
+    #pane-area { width: 1fr; height: 1fr; layout: horizontal; }
     #left-panes { width: 1fr; height: 100%; layout: vertical; margin-right: 1; }
     #navigation-pane, #content, #detail-pane, #status-pane {
         background: #121212;

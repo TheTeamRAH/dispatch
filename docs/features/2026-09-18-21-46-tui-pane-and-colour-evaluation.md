@@ -2,7 +2,7 @@
 type: feature-specification
 title: TUI pane and colour evaluation
 description: Define switchable multi-pane Dispatch interface variants and a dark operational colour system for operator evaluation.
-status: in_progress
+status: completed
 tags:
   - dispatch
   - tui
@@ -235,6 +235,7 @@ Run the targeted test before and after implementation. Run `uv run pytest --snap
 - The compact Menu pane remained blank in the operator's terminal despite a nested menu widget rendering in headless tests. Remove the nested menu widget and render action chips directly in the titled Menu pane, so no child scroll/layout behavior can hide the menu text.
 - The direct Menu pane still had no drawable row in compact mode because the common one-cell vertical pane padding consumed its two post-border rows. Preserve the Menu pane's horizontal padding but set its vertical padding to zero.
 - The product owner prefers the concise binding-guide style currently rendered by Textual's bottom `Footer` over the top Menu pane's filled action chips. Remove `Footer` from the application entirely, including its CSS and import. The titled top Menu pane becomes the sole normal-screen command guide and must render the four existing action bindings (`o` One-off, `s` Saved, `m` Manage, `h` History) in the footer-style shortcut-and-label presentation: accent-coloured shortcut text, readable default-colour label text, black/grey-black pane background, and no filled chips or active-action marker. Preserve the existing action bindings and Escape semantics. Keep the Menu pane at the top and retain its visible violet border/title. Reduce its height to the minimum that displays its single command-guide row within its border at all responsive sizes, returning the freed vertical space to the result/workflow pane. Update TUI interaction assertions and snapshots at desktop, compact, and result states. Validate with the targeted Menu/layout tests, `uv run pytest tests/test_tui.py --snapshot-update`, and `uv run pytest`.
+- The product owner reported that Current Action's lower violet outline was clipped after the Footer removal. The lower body must consume only workspace height remaining after the fixed Menu pane and its margin; it must not retain a `100%` height that overflows its parent. At compact viewports, the Main/Current Action pane's bottom border must render within the terminal viewport. Add a geometry regression assertion and update snapshots.
 
 ## Sources
 
