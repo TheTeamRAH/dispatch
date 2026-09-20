@@ -26,6 +26,7 @@ Synchronize dependencies with `uv sync --all-groups`, run tests with `uv run pyt
 | Date | Purpose | Spec | Author |
 | --- | --- | --- | --- |
 
+| 2026-09-18-21-46 | TUI pane and colour evaluation | [Spec](docs/features/2026-09-18-21-46-tui-pane-and-colour-evaluation.md) | OpenCode |
 | 2026-09-18-18-58 | RPM update discovery dashboard | [Spec](docs/features/2026-09-18-18-58-rpm-update-discovery.md) | OpenCode |
 
 See [the complete feature index](docs/features/README.md).

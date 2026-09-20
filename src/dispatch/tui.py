@@ -10,8 +10,9 @@ from typing import Protocol
 from textual.app import App, ComposeResult
 from textual.containers import Container, VerticalScroll
 from textual.events import Resize
+from textual.markup import escape
 from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Header, Input, Label, SelectionList, Static
+from textual.widgets import Button, Header, Input, Label, SelectionList, Static
 
 from .models import CurrentRebootState, RebootForecast, TargetResult
 
@@ -83,12 +84,51 @@ class DispatchApp(App[None]):
     """Idle menu and result views; workflows can supply normalized results."""
 
     CSS = """
-    Screen { layout: vertical; }
-    #content { height: 1fr; padding: 1 2; }
-    Screen.-narrow #content { padding: 0 1; }
-    Screen.-narrow Header { display: none; }
-    PasswordPrompt, PreflightFailurePrompt, RemoveAllTargetsPrompt { align: center middle; background: $surface; }
-    PasswordPrompt #dialog, PreflightFailurePrompt #dialog, RemoveAllTargetsPrompt #dialog { width: 70%; height: auto; padding: 1 2; border: round $accent; }
+    Screen { layout: vertical; background: #000000; color: #f0eaff; }
+    Header { background: #000000; color: #f0eaff; }
+    #workspace { height: 1fr; layout: vertical; padding: 1; }
+    #pane-area { width: 1fr; height: 100%; layout: horizontal; }
+    #left-panes { width: 1fr; height: 100%; layout: vertical; margin-right: 1; }
+    #navigation-pane, #content, #detail-pane, #status-pane {
+        background: #121212;
+        border: round #C45AFF;
+        height: 100%;
+        padding: 1;
+    }
+    #navigation-pane { width: 1fr; height: 3; margin: 0 0 1 0; padding: 0 1; }
+    #content { width: 1fr; }
+    #detail-pane { width: 24; }
+    #detail { width: 1fr; }
+    #navigation { width: 1fr; }
+    #status-pane { display: none; width: 1fr; }
+    .pane-main { border: round #C45AFF; }
+    .status-success { color: #00FA9A; }
+    .status-warning { color: #FFD700; }
+    .status-error { color: #FF4500; }
+    Input, SelectionList { border: round #A684E8; background: #000000; color: #f0eaff; }
+    #content SelectionList { height: 2; }
+    Input:focus, SelectionList:focus { border: round #C45AFF; }
+    Button { background: #000000; color: #f0eaff; border: round #A684E8; }
+    Button:focus { background: #000000; color: #FF69B4; border: round #C45AFF; }
+    #left-panes { width: 38; }
+    #content, #status-pane { height: 1fr; }
+    #status-pane { display: block; margin-top: 1; }
+    #detail-pane { width: 1fr; height: 1fr; }
+    #navigation-pane, #content, #status-pane, #detail-pane {
+        border-title-color: #A684E8;
+        border-title-background: #121212;
+        border-title-style: bold;
+    }
+    Screen.-compact #workspace { padding: 0; }
+    Screen.-compact Header { display: none; }
+    Screen.-compact #navigation-pane { height: 3; margin-bottom: 1; }
+    Screen.-compact #pane-area { layout: vertical; }
+    Screen.-compact #left-panes { width: 1fr; height: 1fr; margin: 0; }
+    Screen.-compact #content { height: 1fr; }
+    Screen.-compact #content SelectionList { height: 4; }
+    Screen.-compact #status-pane, Screen.-compact #detail-pane { display: none; }
+    PasswordPrompt, PreflightFailurePrompt, RemoveAllTargetsPrompt { align: center middle; background: #000000; }
+    PasswordPrompt #dialog, PreflightFailurePrompt #dialog, RemoveAllTargetsPrompt #dialog { width: 70%; height: auto; padding: 1 2; background: #000000; border: round #C45AFF; }
     Screen.-narrow #dialog { width: 100%; }
     """
     BINDINGS = [
@@ -117,9 +157,25 @@ class DispatchApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with VerticalScroll(id="content"):
-            yield Static(self._content(), id="view")
-        yield Footer()
+        with Container(id="workspace"):
+            navigation_pane = Static(self._navigation(), id="navigation-pane")
+            navigation_pane.border_title = "Menu"
+            yield navigation_pane
+            with Container(id="pane-area"):
+                with Container(id="left-panes"):
+                    with VerticalScroll(id="content") as content_pane:
+                        content_pane.border_title = "Current Action"
+                        yield Static(self._content(), id="view")
+                    status_pane = Static(self._status_content(), id="status-pane")
+                    status_pane.border_title = "Return Status"
+                    yield status_pane
+                with VerticalScroll(id="detail-pane") as detail_pane:
+                    detail_pane.border_title = "Detail"
+                    yield Static(self._detail_content(), id="detail")
+
+    def on_mount(self) -> None:
+        self._apply_responsive_classes()
+        self._refresh()
 
     async def action_one_off(self) -> None:
         await self._clear_controls()
@@ -180,7 +236,8 @@ class DispatchApp(App[None]):
             self._refresh()
 
     def on_resize(self, event: Resize) -> None:
-        self.screen.set_class(event.size.width <= 50, "-narrow")
+        self._apply_responsive_classes()
+        self._refresh()
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if not event.value.strip():
@@ -304,8 +361,79 @@ class DispatchApp(App[None]):
 
     def _refresh(self) -> None:
         self.query_one("#view", Static).update(self._content())
+        self.query_one("#navigation-pane", Static).update(self._navigation())
+        self.query_one("#detail", Static).update(self._detail_content())
+        self.query_one("#status-pane", Static).update(self._status_content())
+        status_class = self._status_class()
+        self.query_one("#view", Static).set_classes("")
+        self.query_one("#detail", Static).set_classes(status_class)
+
+    def _apply_responsive_classes(self) -> None:
+        self.screen.set_class(self.size.width <= 50, "-narrow")
+        self.screen.set_class(self._is_compact(), "-compact")
+
+    def _is_compact(self) -> bool:
+        return self.size.width <= 60 or self.size.height <= 30
+
+    def _navigation(self) -> str:
+        actions = (
+            ("o", "one_off", "One-off"),
+            ("s", "saved", "Saved"),
+            ("m", "manage", "Manage"),
+            ("h", "history", "History"),
+        )
+        return "  ".join(f"[#A684E8]{key}[/] {label}" for key, _, label in actions)
+
+    def _detail_content(self) -> str:
+        return self._main_content()
+
+    def _status_content(self) -> str:
+        results = self.history_run.results if self.view == "history_detail" and self.history_run is not None else self.results
+        if results:
+            result = results[-1]
+            return f"RETURN STATUS\n\n{result.target.name}: {result.outcome.value}"
+        if self.management_message:
+            return f"RETURN STATUS\n\n{self.management_message}"
+        return f"RETURN STATUS\n\n{self.view.replace('_', ' ').title()} ready."
+
+    def _status_class(self) -> str:
+        if self.view not in {"summary", "progress", "history_detail"}:
+            return ""
+        results = self.history_run.results if self.view == "history_detail" and self.history_run is not None else self.results
+        if any(result.outcome.value != "success" for result in results):
+            if all(result.outcome.value in {"skipped", "cancelled"} for result in results):
+                return "status-warning"
+            return "status-error"
+        if self.view == "progress" or any(
+            result.security_state.state == "unknown"
+            or result.current_reboot is CurrentRebootState.UNKNOWN
+            or result.reboot_forecast in {RebootForecast.LIKELY, RebootForecast.UNKNOWN}
+            for result in results
+        ):
+            return "status-warning"
+        if results:
+            return "status-success"
+        return ""
 
     def _content(self) -> str:
+        if self._is_compact() and self.view in {"menu", "summary", "progress", "history_detail"}:
+            return self._main_content()
+        return self._posting_context()
+
+    def _posting_context(self) -> str:
+        labels = {
+            "menu": "Choose a top-menu action.",
+            "one_off": "Enter a target below.",
+            "saved": "Select targets below.",
+            "manage": "Manage targets below.",
+            "history": "Select a persisted run below.",
+            "history_detail": "Detailed history is on the right.",
+            "progress": "Inspection progress is on the right.",
+            "summary": "Detailed results are on the right.",
+        }
+        return labels[self.view]
+
+    def _main_content(self) -> str:
         if self.view == "menu":
             return "Dispatch\n\nInspect one-off target [o]\nInspect saved targets [s]\nManage saved targets [m]\nView history [h]\n\nRead-only RPM update discovery."
         if self.view == "one_off":
@@ -336,16 +464,26 @@ class DispatchApp(App[None]):
         if not results:
             return "Discovery summary\n\nNo completed target results."
         lines = [title]
-        for result in results:
+        host_accents = ("#A684E8", "#79C0FF", "#FFB86C", "#FF69B4")
+        multi_host = len(results) > 1
+        for index, result in enumerate(results):
+            outcome_color = "#00FA9A" if result.outcome.value == "success" else "#FFD700" if result.outcome.value in {"skipped", "cancelled"} else "#FF4500"
+            host_header = f"{escape(result.target.name)}: {result.outcome.value}"
+            if multi_host:
+                host_header = f"[bold {host_accents[index % len(host_accents)]}]{host_header}[/]"
+            security_color = "#79C0FF" if result.security_state.state == "known" else "#FFD700"
+            current_reboot_color = "#00FA9A" if result.current_reboot is CurrentRebootState.NOT_REQUIRED else "#FFD700"
+            forecast_color = "#00FA9A" if result.reboot_forecast is RebootForecast.NOT_INDICATED else "#FFD700"
             lines.extend(
                 [
-                    f"\n{result.target.name}: {result.outcome.value}",
-                    f"Pending updates: {len(result.packages)}",
-                    f"Security: {result.security_state.state}" + (
+                    f"\n{host_header}",
+                    f"[{outcome_color}]Outcome: {result.outcome.value}[/]",
+                    f"[#A684E8]Pending updates: {len(result.packages)}[/]",
+                    f"[{security_color}]Security: {result.security_state.state}" + (
                         f" ({result.security_state.count})" if result.security_state.count is not None else ""
-                    ),
-                    f"Current reboot: {result.current_reboot.value}",
-                    f"Post-update reboot forecast: {result.reboot_forecast.value}",
+                    ) + "[/]",
+                    f"[{current_reboot_color}]Current reboot: {result.current_reboot.value}[/]",
+                    f"[{forecast_color}]Post-update reboot forecast: {result.reboot_forecast.value}[/]",
                 ]
             )
             if result.explanation:
@@ -356,9 +494,7 @@ class DispatchApp(App[None]):
                 lines.append(f"Forecast detail: {result.reboot_forecast_explanation}")
             if self.show_details:
                 lines.append("Package details:")
-                lines.extend(
-                    f"{package.name}.{package.architecture} {package.installed_evr} -> {package.candidate_evr}"
-                    for package in result.packages
-                )
+                package_color = host_accents[index % len(host_accents)] if multi_host else "#A684E8"
+                lines.extend(f"[{package_color}]{escape(package.name)}.{escape(package.architecture)} {escape(package.installed_evr)} -> {escape(package.candidate_evr)}[/]" for package in result.packages)
         lines.append("\nPress d to toggle package details.")
         return "\n".join(lines)
