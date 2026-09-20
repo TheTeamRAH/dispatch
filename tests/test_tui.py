@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Static
-from textual.widgets import Button, Input, SelectionList
+from textual.widgets import Button, Footer, Input, SelectionList
 
 from dispatch.models import (
     CurrentRebootState,
@@ -31,7 +33,24 @@ def result() -> TargetResult:
 
 
 def displayed(app: DispatchApp) -> str:
-    return str(app.query_one("#view", Static).render())
+    return "\n".join(str(app.query_one(selector, Static).render()) for selector in ("#view", "#detail"))
+
+
+def test_summary_uses_semantic_metrics_and_distinct_multi_host_detail_accents() -> None:
+    first = result()
+    second = replace(first, target=TargetSnapshot(None, "operator@node-two", "operator@node-two"))
+    app = DispatchApp(results=[first, second])
+    app.show_details = True
+
+    summary = app._summary()
+
+    assert "[#00FA9A]Outcome: success[/]" in summary
+    assert "[#A684E8]Pending updates: 1[/]" in summary
+    assert "[#FFD700]Post-update reboot forecast: likely[/]" in summary
+    assert "[bold #A684E8]operator@node: success[/]" in summary
+    assert "[bold #79C0FF]operator@node-two: success[/]" in summary
+    assert "[#A684E8]kernel.x86_64" in summary
+    assert "[#79C0FF]kernel.x86_64" in summary
 
 
 class History:
@@ -55,6 +74,111 @@ async def test_initial_menu_is_idle_and_exposes_all_workflows() -> None:
         assert "View history" in displayed(app)
         await pilot.press("h")
         assert app.view == "history"
+
+
+@pytest.mark.asyncio
+async def test_small_terminal_uses_one_main_posting_panel_for_full_results() -> None:
+    app = DispatchApp(results=[result()])
+
+    async with app.run_test(size=(104, 27)):
+        assert app.screen.has_class("-compact")
+        content = app.query_one("#content")
+        assert content.region.width > app.size.width // 2
+        assert content.region.bottom == app.size.height
+        assert app.query_one("#status-pane").display is False
+        assert app.query_one("#detail-pane").display is False
+        assert "Pending updates: 1" in str(app.query_one("#view", Static).render())
+
+
+@pytest.mark.asyncio
+async def test_small_terminal_keeps_menu_chips_and_saved_target_options_visible() -> None:
+    app = DispatchApp(registry=Registry())
+
+    async with app.run_test(size=(104, 27)) as pilot:
+        assert list(app.query("#navigation")) == []
+        navigation = app.query_one("#navigation-pane", Static)
+        assert navigation.styles.padding.top == 0
+        assert navigation.region.height == 3
+        assert app._navigation() == (
+            "[#A684E8]o[/] One-off  [#A684E8]s[/] Saved  "
+            "[#A684E8]m[/] Manage  [#A684E8]h[/] History"
+        )
+        assert list(app.query(Footer)) == []
+        await pilot.press("s")
+        selector = app.query_one("#saved-targets", SelectionList)
+        assert selector.region.height >= 4
+        assert str(app.query_one("#view", Static).render()) == "Select targets below."
+
+
+@pytest.mark.asyncio
+async def test_posting_split_places_navigation_above_left_context_and_right_detail() -> None:
+    app = DispatchApp(results=[result()])
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("d")
+        navigation = app.query_one("#navigation-pane", Static)
+        content = app.query_one("#content")
+        detail_pane = app.query_one("#detail-pane")
+        detail = app.query_one("#detail", Static)
+        status = app.query_one("#status-pane", Static)
+
+        assert str(navigation.border_title) == "Menu"
+        assert str(content.border_title) == "Current Action"
+        assert str(status.border_title) == "Return Status"
+        assert str(detail_pane.border_title) == "Detail"
+        assert navigation.region.width > app.size.width // 2
+        assert navigation.region.height >= 3
+        assert navigation.region.y < content.region.y
+        assert content.region.y < status.region.y
+        assert abs(content.region.height - status.region.height) <= 1
+        assert detail_pane.region.x > content.region.x
+        assert detail_pane.region.height > content.region.height
+        assert "kernel.x86_64" in str(detail.render())
+
+
+@pytest.mark.asyncio
+async def test_posting_split_uses_horizontal_menu_and_clears_detail_status_on_navigation() -> None:
+    app = DispatchApp(results=[result()])
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("d")
+        navigation = str(app.query_one("#navigation-pane", Static).render())
+        assert app._navigation().count("[#A684E8]") == 4
+        assert "o One-off" in navigation
+        assert "s Saved" in navigation
+        assert str(app.query_one("#content").border_title) == "Current Action"
+        assert "Pending updates" not in str(app.query_one("#view", Static).render())
+        assert "Pending updates: 1" in str(app.query_one("#detail", Static).render())
+        assert app.query_one("#view", Static).has_class("status-warning") is False
+        assert app.query_one("#detail", Static).has_class("status-warning")
+
+        await pilot.press("o")
+        assert app.query_one("#detail", Static).has_class("status-warning") is False
+
+
+@pytest.mark.asyncio
+async def test_posting_layout_preserves_one_off_input_and_semantic_status() -> None:
+    healthy_result = replace(result(), reboot_forecast=RebootForecast.NOT_INDICATED)
+    app = DispatchApp(results=[healthy_result])
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        assert app.query_one("#detail", Static).has_class("status-success")
+        await pilot.press("o", *"admin@rocky")
+        destination = app.query_one("#ssh-destination", Input)
+        await pilot.resize_terminal(40, 20)
+        await pilot.resize_terminal(120, 40)
+        assert destination.value == "admin@rocky"
+        assert app.focused is destination
+        assert app.discovery_started is False
+
+
+@pytest.mark.asyncio
+async def test_unknown_result_metadata_uses_warning_status_styling() -> None:
+    unknown_metadata = replace(result(), security_state=SecurityState.unknown("Advisory metadata is unavailable."))
+    app = DispatchApp(results=[unknown_metadata])
+
+    async with app.run_test(size=(120, 40)):
+        assert app.query_one("#detail", Static).has_class("status-warning")
 
 
 @pytest.mark.asyncio
