@@ -91,7 +91,7 @@ async def test_small_terminal_uses_one_main_posting_panel_for_full_results() -> 
 
 
 @pytest.mark.asyncio
-async def test_small_terminal_keeps_menu_chips_and_saved_target_options_visible() -> None:
+async def test_small_terminal_keeps_menu_guide_and_saved_target_options_visible() -> None:
     app = DispatchApp(registry=Registry())
 
     async with app.run_test(size=(104, 27)) as pilot:
@@ -108,6 +108,19 @@ async def test_small_terminal_keeps_menu_chips_and_saved_target_options_visible(
         selector = app.query_one("#saved-targets", SelectionList)
         assert selector.region.height >= 4
         assert str(app.query_one("#view", Static).render()) == "Select targets below."
+
+
+@pytest.mark.asyncio
+async def test_wide_saved_target_selector_shows_options() -> None:
+    app = DispatchApp(registry=Registry())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("s")
+        selector = app.query_one("#saved-targets", SelectionList)
+        button = app.query_one("#inspect-saved", Button)
+        content = app.query_one("#content")
+        assert selector.region.height >= 4
+        assert button.region.bottom <= content.region.bottom
 
 
 @pytest.mark.asyncio

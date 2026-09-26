@@ -106,7 +106,7 @@ class DispatchApp(App[None]):
     .status-warning { color: #FFD700; }
     .status-error { color: #FF4500; }
     Input, SelectionList { border: round #A684E8; background: #000000; color: #f0eaff; }
-    #content SelectionList { height: 2; }
+    #content SelectionList { height: 4; }
     Input:focus, SelectionList:focus { border: round #C45AFF; }
     Button { background: #000000; color: #f0eaff; border: round #A684E8; }
     Button:focus { background: #000000; color: #FF69B4; border: round #C45AFF; }
