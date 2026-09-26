@@ -2,7 +2,7 @@
 type: feature-specification
 title: Active workflow pane and progress feedback
 description: Replace persistent command hints in the navigation pane with current-work activity and add honest progress feedback for running inspections.
-status: proposed
+status: in_progress
 tags:
   - dispatch
   - tui

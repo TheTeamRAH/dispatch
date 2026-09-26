@@ -63,15 +63,68 @@ class History:
 
 
 @pytest.mark.asyncio
+async def test_activity_pane_shows_status_without_menu_actions() -> None:
+    app = DispatchApp()
+
+    async with app.run_test(size=(80, 24)):
+        activity = app.query_one("#navigation-pane", Static)
+        assert str(activity.border_title) == "Activity"
+        assert str(activity.render()) == "Ready"
+        assert "One-off" not in str(activity.render())
+
+
+@pytest.mark.asyncio
+async def test_action_workflow_selects_action_before_hosts() -> None:
+    app = DispatchApp(registry=Registry())
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("a")
+        assert list(app.query("#action-select"))
+        app.query_one("#action-select", SelectionList).select("rpm-discovery")
+        await pilot.click("#choose-action")
+        assert list(app.query("#action-hosts"))
+        assert app.view == "action_hosts"
+
+
+@pytest.mark.asyncio
+async def test_inventory_workflow_exposes_list_edit_add_delete() -> None:
+    app = DispatchApp(registry=Registry())
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("i")
+        assert app.view == "inventory"
+        for control_id in ("inventory-list", "inventory-edit", "inventory-add", "inventory-delete"):
+            assert list(app.query(f"#{control_id}"))
+
+
+@pytest.mark.asyncio
+async def test_running_inspection_shows_animated_activity_status() -> None:
+    inspector = BlockingInspector()
+    app = DispatchApp(inspection_service=inspector)
+    target = TargetSnapshot(None, "operator@node", "operator@node")
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await app._start_inspection([target])
+        await inspector.started.wait()
+        await pilot.pause(0.25)
+        activity = str(app.query_one("#navigation-pane", Static).render())
+        assert "Inspecting targets (read-only)" in activity
+        assert app._spinner_timer is not None
+        inspector.release.set()
+        await pilot.pause()
+        assert "Inspection complete" in str(app.query_one("#navigation-pane", Static).render())
+        assert app._spinner_timer is None
+
+
+@pytest.mark.asyncio
 async def test_initial_menu_is_idle_and_exposes_all_workflows() -> None:
     app = DispatchApp()
 
     async with app.run_test(size=(80, 24)) as pilot:
         assert app.discovery_started is False
-        assert "Inspect one-off target" in displayed(app)
-        assert "Inspect saved targets" in displayed(app)
-        assert "Manage saved targets" in displayed(app)
-        assert "View history" in displayed(app)
+        assert "Action (a)" in displayed(app)
+        assert "Inventory (i)" in displayed(app)
+        assert "History (h)" in displayed(app)
         await pilot.press("h")
         assert app.view == "history"
 
@@ -99,12 +152,10 @@ async def test_small_terminal_keeps_menu_guide_and_saved_target_options_visible(
         navigation = app.query_one("#navigation-pane", Static)
         assert navigation.styles.padding.top == 0
         assert navigation.region.height == 3
-        assert app._navigation() == (
-            "[#A684E8]o[/] One-off  [#A684E8]s[/] Saved  "
-            "[#A684E8]m[/] Manage  [#A684E8]h[/] History"
-        )
+        assert app._navigation() == "Ready"
         assert list(app.query(Footer)) == []
-        await pilot.press("s")
+        await app.action_saved()
+        await pilot.pause()
         selector = app.query_one("#saved-targets", SelectionList)
         assert selector.region.height >= 4
         assert str(app.query_one("#view", Static).render()) == "Select targets below."
@@ -115,7 +166,8 @@ async def test_wide_saved_target_selector_shows_options() -> None:
     app = DispatchApp(registry=Registry())
 
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press("s")
+        await app.action_saved()
+        await pilot.pause()
         selector = app.query_one("#saved-targets", SelectionList)
         button = app.query_one("#inspect-saved", Button)
         content = app.query_one("#content")
@@ -135,7 +187,7 @@ async def test_posting_split_places_navigation_above_left_context_and_right_deta
         detail = app.query_one("#detail", Static)
         status = app.query_one("#status-pane", Static)
 
-        assert str(navigation.border_title) == "Menu"
+        assert str(navigation.border_title) == "Activity"
         assert str(content.border_title) == "Current Action"
         assert str(status.border_title) == "Return Status"
         assert str(detail_pane.border_title) == "Detail"
@@ -156,16 +208,17 @@ async def test_posting_split_uses_horizontal_menu_and_clears_detail_status_on_na
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.press("d")
         navigation = str(app.query_one("#navigation-pane", Static).render())
-        assert app._navigation().count("[#A684E8]") == 4
-        assert "o One-off" in navigation
-        assert "s Saved" in navigation
+        assert app._navigation() == "✓ Inspection complete"
+        assert "✓ Inspection complete" in navigation
+        assert "One-off" not in navigation
+        assert "Saved" not in navigation
         assert str(app.query_one("#content").border_title) == "Current Action"
         assert "Pending updates" not in str(app.query_one("#view", Static).render())
         assert "Pending updates: 1" in str(app.query_one("#detail", Static).render())
         assert app.query_one("#view", Static).has_class("status-warning") is False
         assert app.query_one("#detail", Static).has_class("status-warning")
 
-        await pilot.press("o")
+        await app.action_one_off()
         assert app.query_one("#detail", Static).has_class("status-warning") is False
 
 
@@ -176,7 +229,8 @@ async def test_posting_layout_preserves_one_off_input_and_semantic_status() -> N
 
     async with app.run_test(size=(120, 40)) as pilot:
         assert app.query_one("#detail", Static).has_class("status-success")
-        await pilot.press("o", *"admin@rocky")
+        await app.action_one_off()
+        await pilot.press(*"admin@rocky")
         destination = app.query_one("#ssh-destination", Input)
         await pilot.resize_terminal(40, 20)
         await pilot.resize_terminal(120, 40)
@@ -309,7 +363,7 @@ async def test_one_off_submission_explicitly_starts_inspection() -> None:
     app = DispatchApp(inspection_service=inspector)
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.press("o")
+        await app.action_one_off()
         destination = app.query_one("#ssh-destination", Input)
         await pilot.press(*"admin@rocky")
         assert destination.value == "admin@rocky"
@@ -326,7 +380,8 @@ async def test_saved_target_selection_starts_only_selected_targets() -> None:
     app = DispatchApp(inspection_service=inspector, registry=Registry())
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.press("s")
+        await app.action_saved()
+        await pilot.pause()
         selector = app.query_one("#saved-targets", SelectionList)
         selector.select("two")
         await pilot.click("#inspect-saved")
@@ -340,7 +395,7 @@ async def test_saved_view_handles_empty_registry_without_a_selector() -> None:
     registry.targets = []
     app = DispatchApp(registry=registry)
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.press("s")
+        await app.action_saved()
         assert "No saved targets" in displayed(app)
         assert list(app.query("#saved-targets")) == []
 
@@ -351,7 +406,7 @@ async def test_manage_registry_changes_without_starting_discovery() -> None:
     app = DispatchApp(registry=registry)
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.press("m")
+        await app.action_manage()
         target_id = app.query_one("#target-id", Input)
         await pilot.press(*"db")
         await pilot.press("tab")
@@ -368,7 +423,7 @@ async def test_manage_lists_targets_and_requires_delete_to_remove_all() -> None:
     registry = Registry()
     app = DispatchApp(registry=registry)
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.press("m")
+        await app.action_manage()
         assert "one: One (one@rocky)" in displayed(app)
         await pilot.press("tab", "tab", "tab", "tab", "tab", "tab", "enter")
         await pilot.pause()
@@ -392,7 +447,7 @@ async def test_one_off_password_prompt_runs_from_inspection_worker() -> None:
     inspector = PromptingInspector()
     app = DispatchApp(inspection_service=inspector)
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.press("o")
+        await app.action_one_off()
         await pilot.press(*"admin@rocky", "enter")
         await pilot.pause()
         assert isinstance(app.screen, PasswordPrompt)
@@ -407,7 +462,7 @@ async def test_one_off_submission_immediately_shows_progress() -> None:
     inspector = BlockingInspector()
     app = DispatchApp(inspection_service=inspector)
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.press("o")
+        await app.action_one_off()
         await pilot.press(*"admin@rocky", "enter")
         await inspector.started.wait()
         assert app.view == "progress"
@@ -420,7 +475,7 @@ async def test_new_inspection_clears_previous_results_during_progress() -> None:
     inspector = BlockingInspector()
     app = DispatchApp(results=[result()], inspection_service=inspector)
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.press("o")
+        await app.action_one_off()
         await pilot.press(*"admin@rocky", "enter")
         await inspector.started.wait()
         assert app.results == []
@@ -433,7 +488,7 @@ async def test_progress_exposes_batch_cancellation_and_renders_cancelled_result(
     app = DispatchApp(inspection_service=inspector)
 
     async with app.run_test(size=(80, 24)) as pilot:
-        await pilot.press("o")
+        await app.action_one_off()
         await pilot.press(*"admin@rocky", "enter")
         await inspector.started.wait()
         assert app.query_one("#cancel-inspection", Button).label == "Cancel batch"
@@ -533,7 +588,7 @@ def test_interactive_v1_viewport_snapshot(snap_compare, size, view) -> None:
 async def test_resize_one_off_form_preserves_typed_destination_and_focus() -> None:
     app = DispatchApp()
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press("o")
+        await app.action_one_off()
         await pilot.press(*"admin@rocky")
         destination = app.query_one("#ssh-destination", Input)
         assert app.focused is destination
@@ -547,7 +602,8 @@ async def test_resize_one_off_form_preserves_typed_destination_and_focus() -> No
 async def test_resize_saved_selection_and_empty_state_preserve_view_state() -> None:
     app = DispatchApp(registry=Registry())
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press("s")
+        await app.action_saved()
+        await pilot.pause()
         selector = app.query_one("#saved-targets", SelectionList)
         selector.select("two")
         await pilot.resize_terminal(40, 20)
@@ -558,7 +614,7 @@ async def test_resize_saved_selection_and_empty_state_preserve_view_state() -> N
     empty_registry.targets = []
     empty_app = DispatchApp(registry=empty_registry)
     async with empty_app.run_test(size=(120, 40)) as pilot:
-        await pilot.press("s")
+        await empty_app.action_saved()
         await pilot.resize_terminal(40, 20)
         await pilot.resize_terminal(120, 40)
         assert empty_app.view == "saved"
@@ -569,7 +625,7 @@ async def test_resize_saved_selection_and_empty_state_preserve_view_state() -> N
 async def test_resize_management_and_history_detail_preserve_state() -> None:
     management_app = DispatchApp(registry=Registry())
     async with management_app.run_test(size=(120, 40)) as pilot:
-        await pilot.press("m")
+        await management_app.action_manage()
         await pilot.press(*"db")
         target_id = management_app.query_one("#target-id", Input)
         await pilot.resize_terminal(40, 20)
@@ -629,7 +685,7 @@ async def test_resize_active_progress_preserves_work_and_does_not_duplicate_insp
     inspector = BlockingInspector()
     app = DispatchApp(inspection_service=inspector)
     async with app.run_test(size=(120, 40)) as pilot:
-        await pilot.press("o")
+        await app.action_one_off()
         await pilot.press(*"admin@rocky", "enter")
         await inspector.started.wait()
         await pilot.resize_terminal(40, 20)

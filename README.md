@@ -10,8 +10,9 @@ A modular terminal user interface for dispatching infrastructure operations.
 .
 ├── AGENTS.md          # Repository working instructions
 ├── docs/
-│   ├── discovery/     # Reusable implementation lessons
-│   └── features/      # Feature specifications and their index
+│   ├── README.md       # Documentation index
+│   ├── discovery/      # Reusable implementation lessons and index
+│   └── features/       # Feature specifications and their index
 ├── pyproject.toml     # uv-managed Python project metadata
 ├── src/dispatch/      # Dispatch application package
 ├── tests/             # Unit and Textual interaction tests
@@ -32,7 +33,7 @@ Synchronize dependencies with `uv sync --all-groups`, run tests with `uv run pyt
 | 2026-09-18-21-46 | TUI pane and colour evaluation | [Spec](docs/features/2026-09-18-21-46-tui-pane-and-colour-evaluation.md) | OpenCode |
 | 2026-09-18-18-58 | RPM update discovery dashboard | [Spec](docs/features/2026-09-18-18-58-rpm-update-discovery.md) | OpenCode |
 
-See [the complete feature index](docs/features/README.md).
+See the [documentation index](docs/README.md), including the [complete feature index](docs/features/README.md) and [discovery lessons index](docs/discovery/README.md).
 
 ## Contributing
 
