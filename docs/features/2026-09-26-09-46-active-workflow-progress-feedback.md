@@ -31,7 +31,7 @@ sources:
 
 ## Context
 
-Dispatch's Posting layout currently keeps a persistent top pane titled `Menu` containing the four global action hints (`o One-off`, `s Saved`, `m Manage`, and `h History`). Earlier Textual Footer output also displayed contextual bindings, including disabled/crossed-out actions. Those command-guide elements are useful during initial exploration but are not useful as persistent content while a workflow is active. The product owner wants that pane to describe only what Dispatch is currently doing.
+Dispatch's Posting layout currently keeps a persistent top pane titled `Menu` containing the four global action hints (`o One-off`, `s Saved`, `m Manage`, and `h History`). Earlier Textual Footer output also displayed contextual bindings, including disabled/crossed-out actions. Those command-guide elements are useful during initial exploration but are not useful as persistent content while a workflow is active. The product owner wants that pane to describe only what Dispatch is currently doing. The amended navigation will expose `a Action`, `i Inventory`, and `h History` instead; `Action` will contain action selection followed by host selection, while `Inventory` will contain list, edit, add, and delete operations.
 
 The application already has an explicit `progress` view and a `Cancel batch` control, but progress is currently represented mainly by text. The inspection workflow can receive incremental target results through `_result_completed`, so the UI can provide meaningful activity feedback without changing the inspection service, SSH transport, normalized result model, or remote behavior.[^dispatch-tui]
 
@@ -71,9 +71,9 @@ R1. The pane currently identified as `#navigation-pane` must not render the pers
 
 R2. The activity text must remain explicit and readable without colour or animation. A stopped animation must still leave a meaningful textual state.
 
-R3. Idle/menu state must still expose the existing `o`, `s`, `m`, and `h` workflows through a visible, non-crossed-out command guide in an appropriate location. The change must not remove or repurpose those key bindings.
+R3. Idle/menu state must expose the amended `a` Action, `i` Inventory, and `h` History workflows through a visible, non-crossed-out command guide in an appropriate location. Action must select an operation before selecting hosts; Inventory must expose list, edit, add, and delete choices. The change must not remove the existing history workflow or inventory persistence semantics.
 
-R4. Forms, saved-target selection, management, history, result, modal, and cancellation workflows must retain their existing controls, focus, values, and semantics.
+R4. Forms, action selection, host selection, inventory management, history, result, modal, and cancellation workflows must retain their existing controls, focus, values, and semantics.
 
 ### Running inspection feedback
 
@@ -127,7 +127,8 @@ For each production behavior, add a focused interaction test first and run it to
 
 ### Required tests
 
-- Idle menu retains visible `o`, `s`, `m`, and `h` discoverability without crossed-out entries.
+- Idle menu retains visible `a` Action, `i` Inventory, and `h` History discoverability without crossed-out entries.
+- Action selection precedes host selection, and Inventory exposes list, edit, add, and delete choices without changing the underlying registry format.
 - Each non-idle view renders current-context text in the activity pane and does not render the persistent action guide there.
 - Active inspection starts the animation and exposes `Cancel batch`.
 - Multi-target progress changes from `0/N` to `N/N` as result callbacks arrive.
@@ -160,7 +161,7 @@ Snapshots must be visually reviewed before accepting updated baselines; the fina
 
 ## Settled decisions
 
-- Rename the persistent top pane from `Menu` to `Activity`. It must show only the current status and must not repeat the existing `o`, `s`, `m`, and `h` menu items already displayed in the top-level application menu/content.
+- Rename the persistent top pane from `Menu` to `Activity`. It must show only the current status and must not repeat the existing `a`, `i`, and `h` menu items already displayed in the top-level application menu/content.
 - Start with a spinner-only presentation. Do not add a progress bar in this feature.
 - Use the first status wording series, with terminal-safe spinner frames:
   - Idle: `Ready`
@@ -178,6 +179,10 @@ Snapshots must be visually reviewed before accepting updated baselines; the fina
 
 - Add documentation hygiene to this feature's closeout scope: repair the top-level README Markdown table so its header, separator, and rows are contiguous and render consistently; create `docs/README.md` and `docs/discovery/README.md` as OKF-compliant indexes; link both indexes from the repository structure and relevant documentation; and keep the feature index exhaustive.
 - The documentation-index work is content-only and must not change Dispatch runtime behavior, workflow bindings, or the activity/progress design.
+- Rename the current `o` One-off action binding to `a` Action. Action opens an action-first workflow: the operator selects the action to run, then selects the hosts on which to run it. The existing one-off target flow becomes part of the action workflow rather than remaining a top-level menu item.
+- Rename the current `m` Manage binding to `i` Inventory. Inventory opens an inventory-management workflow with explicit list, edit, add, and delete choices for saved hosts/targets. The existing saved-target registry remains the inventory data source; this amendment changes the user-facing navigation and workflow entry point, not the persistence model.
+- Keep `h` as History for this feature. Remove `s` as a top-level action once the amended navigation is implemented.
+- Update the feature's interaction tests, snapshots, documentation indexes, and any current binding references to use `a` Action, `i` Inventory, and `h` History. Do not implement these navigation changes until the amended specification is reviewed and approved.
 
 ## Sources
 
