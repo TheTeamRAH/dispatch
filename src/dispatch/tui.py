@@ -180,6 +180,9 @@ class DispatchApp(App[None]):
         self.saved_targets = []
         self.saved_workflows = []
         self.workflow_results = []
+        self.workflow_current = ""
+        self.workflow_output: list[str] = []
+        self.workflow_spinner = 0
         self.editing_workflow_id = None
         self.selected_workflow = None
         self.management_message = ""
@@ -538,15 +541,39 @@ class DispatchApp(App[None]):
     async def _run_workflow(self, workflow: WorkflowDefinition, targets) -> None:
         await self._clear_controls()
         self.view = "workflow_progress"
-        self.workflow_results = []
+        self.workflow_current = ""
+        self.workflow_output = []
+        self.workflow_spinner = 0
+        self._start_spinner()
         self._refresh()
-        await self.workflow_service.run(workflow, targets, self._password_not_available, self._workflow_result)
+        try:
+            await self.workflow_service.run(
+                workflow,
+                targets,
+                self._password_not_available,
+                self._workflow_result,
+                self._workflow_progress,
+            )
+        finally:
+            self._stop_spinner()
         self.view = "workflow_results"
         self._refresh()
 
     def _workflow_result(self, result) -> None:
         self.workflow_results.append(result)
         self._refresh()
+
+    def _workflow_progress(self, target, step, result) -> None:
+        self.workflow_current = f"{target.name}: {step.name} — {step.command}"
+        if result is not None:
+            status = result.outcome
+            self.workflow_output.append(f"{target.name} / {step.name}: {status}")
+            if result.stdout:
+                self.workflow_output.extend(result.stdout.splitlines()[-8:])
+            if result.stderr:
+                self.workflow_output.extend(result.stderr.splitlines()[-8:])
+        if self.view == "workflow_progress":
+            self._refresh()
 
     async def _remove_all_targets(self) -> None:
         if self.registry is None:
@@ -656,10 +683,11 @@ class DispatchApp(App[None]):
             self._spinner_timer = None
 
     def _advance_spinner(self) -> None:
-        if self.inspection_worker is None and self.view != "progress":
+        if self.inspection_worker is None and self.view != "progress" and self.view != "workflow_progress":
             self._stop_spinner()
             return
         self._spinner_index = (self._spinner_index + 1) % len(self._spinner_frames)
+        self.workflow_spinner = self._spinner_index
         if self.is_mounted:
             self.query_one("#navigation-pane", Static).update(self._navigation())
 
@@ -685,6 +713,9 @@ class DispatchApp(App[None]):
         if self.view == "progress":
             frame = self._spinner_frames[self._spinner_index]
             return f"{frame} Inspecting targets (read-only) — {self.completed_targets}/{self.inspection_total} complete"
+        if self.view == "workflow_progress":
+            frame = self._spinner_frames[self.workflow_spinner]
+            return f"{frame} Running workflow — {len(self.workflow_results)} target(s) complete"
         activity = {
             "menu": "Ready",
             "action": "Select an action",
@@ -794,7 +825,9 @@ class DispatchApp(App[None]):
         if self.view == "workflow_targets":
             return "Select hosts for workflow execution\n\nChoose one or more saved SSH targets before continuing."
         if self.view == "workflow_progress":
-            return "Workflow execution in progress\n\nCommands are running on the selected saved targets."
+            current = self.workflow_current or "Waiting for the first command to start..."
+            output = "\n".join(self.workflow_output[-20:]) or "No output yet."
+            return f"Workflow execution in progress\n\nCurrent command:\n{current}\n\nRecent output:\n{output}"
         if self.view == "workflow_results":
             lines = ["Workflow results", ""]
             for result in self.workflow_results:

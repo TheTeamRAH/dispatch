@@ -30,15 +30,28 @@ class ShellWorkflowExecutor:
     def __init__(self, output_limit: int = OUTPUT_LIMIT) -> None:
         self.output_limit = output_limit
 
-    async def execute(self, workflow: WorkflowDefinition, target: TargetSnapshot, session: CommandSession) -> WorkflowTargetResult:
+    async def execute(self, workflow: WorkflowDefinition, target: TargetSnapshot, session: CommandSession, on_step=None) -> WorkflowTargetResult:
         results: list[StepResult] = []
         failed = False
         for step in (*workflow.startup, *workflow.steps):
             if failed:
-                results.append(self._skipped(step))
+                skipped = self._skipped(step)
+                results.append(skipped)
+                if on_step is not None:
+                    callback = on_step(target, step, skipped)
+                    if inspect.isawaitable(callback):
+                        await callback
                 continue
+            if on_step is not None:
+                callback = on_step(target, step, None)
+                if inspect.isawaitable(callback):
+                    await callback
             result = await self._run_step(step, session)
             results.append(result)
+            if on_step is not None:
+                callback = on_step(target, step, result)
+                if inspect.isawaitable(callback):
+                    await callback
             failed = result.outcome != "success"
         outcome = "success" if not failed else "failed"
         return WorkflowTargetResult(workflow.id, workflow.name, workflow.session, asdict(target), outcome, tuple(results))
@@ -82,7 +95,7 @@ class WorkflowService:
         self.history_store = history_store
         self.executor = executor or ShellWorkflowExecutor()
 
-    async def run(self, workflow: WorkflowDefinition, targets, password_provider, on_result=None) -> list[WorkflowTargetResult]:
+    async def run(self, workflow: WorkflowDefinition, targets, password_provider, on_result=None, on_progress=None) -> list[WorkflowTargetResult]:
         from .workflow import run_batch
 
         async def run_target(target: TargetSnapshot) -> WorkflowTargetResult:
@@ -91,7 +104,7 @@ class WorkflowService:
                 return WorkflowTargetResult(workflow.id, workflow.name, workflow.session, asdict(target), "failed", (), connected.explanation)
             session = await self.transport.open_bash_session(connected) if workflow.session == "persistent" else _IsolatedSession(self.transport, connected)
             try:
-                result = await self.executor.execute(workflow, target, session)
+                result = await self.executor.execute(workflow, target, session, on_progress)
                 if on_result is not None:
                     callback = on_result(result)
                     if inspect.isawaitable(callback):

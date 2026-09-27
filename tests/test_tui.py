@@ -188,7 +188,7 @@ async def test_run_workflow_requires_host_selection(tmp_path) -> None:
     workflow_registry = WorkflowRegistry(tmp_path / "workflows")
     workflow_registry.save(WorkflowDefinition("deploy", "Deploy", steps=(ShellStep("step", "Step", "true"),)))
     class Service:
-        async def run(self, workflow, targets, password_provider, on_result):
+        async def run(self, workflow, targets, password_provider, on_result, on_progress):
             return []
 
     app = DispatchApp(registry=Registry(), workflow_registry=workflow_registry, workflow_service=Service())
