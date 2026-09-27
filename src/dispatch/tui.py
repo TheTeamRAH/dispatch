@@ -470,8 +470,8 @@ class DispatchApp(App[None]):
         if event.button.id == "run-workflow" and self.workflow_service is not None:
             selected = set(self.query_one("#saved-workflows", SelectionList).selected)
             workflows = [item for item in self.saved_workflows if item.id in selected]
-            if len(workflows) == 1 and self.saved_targets and await self.push_screen_wait(WorkflowRunPrompt(workflows[0], len(self.saved_targets))):
-                self.run_worker(self._run_workflow(workflows[0]), exclusive=True)
+            if len(workflows) == 1 and self.saved_targets:
+                self.run_worker(self._confirm_and_run_workflow(workflows[0]), exclusive=True)
             return
         if event.button.id != "inspect-saved" or self.inspection_service is None:
             return
@@ -500,6 +500,10 @@ class DispatchApp(App[None]):
         except ValueError as error:
             self.management_message = str(error)
         self._refresh()
+
+    async def _confirm_and_run_workflow(self, workflow: WorkflowDefinition) -> None:
+        if await self.push_screen_wait(WorkflowRunPrompt(workflow, len(self.saved_targets))):
+            await self._run_workflow(workflow)
 
     async def _run_workflow(self, workflow: WorkflowDefinition) -> None:
         self.view = "workflow_progress"
