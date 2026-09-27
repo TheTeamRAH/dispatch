@@ -76,7 +76,7 @@ Allow an operator to register, edit, remove, select, and deliberately execute re
 
 R1. Dispatch must persist each workflow as one TOML file under `$XDG_CONFIG_HOME/dispatch/workflows/`, using the normal XDG default when the environment variable is absent. The filename must be derived from the workflow ID using a validated, filesystem-safe representation; the workflow ID remains authoritative inside the document.
 
-R2. Each workflow file must begin with `version = 1` and contain one workflow with a non-empty unique `id`, non-empty `name`, `type = "shell"`, `session = "isolated"` or `session = "persistent"`, and at least one ordered command step. Each step must contain a non-empty stable `id`, non-empty `name`, and non-empty `command` string. IDs must be unique across the workflow directory.
+R2. Each workflow file must begin with `version = 1` and contain one workflow with a non-empty unique `id`, non-empty `name`, `type = "shell"`, `session = "isolated"` or `session = "persistent"`, and at least one ordered command step. Each step must contain a non-empty stable `id`, non-empty `name`, and non-empty `command` string. IDs must be unique across the workflow directory. The TUI must generate the workflow ID automatically when registering a new workflow rather than asking the operator to type it.
 
 R3. A persistent workflow may contain ordered startup commands. Startup commands use the same command representation as steps and execute before the first step for each target.
 
@@ -118,7 +118,7 @@ R19. Workflow history must be persisted separately from RPM inspection history s
 
 ### TUI and modularity
 
-R20. The TUI must provide workflow registration, editing, removal, selection, execution confirmation, progress, and results without changing the existing RPM discovery behaviour.
+R20. The TUI must provide workflow registration, editing, removal, selection, execution confirmation, progress, and result views without changing the existing RPM discovery behaviour. New workflow registration must generate the workflow ID automatically and must present `isolated` and `persistent` as selectable session options rather than a free-text field.
 
 R21. The workflow coordinator must consume workflow definitions and target snapshots, select an executor by workflow type, coordinate target-level concurrency using the existing bounded batch mechanism, and persist results. It must not parse shell output as RPM data or contain Bash-specific parsing beyond session framing.
 
@@ -212,4 +212,5 @@ None block this proposed v1 scope. The implementation must choose and document c
 
 ## Amendments
 
-None.
+- Workflow registration now generates the workflow ID automatically in the TUI; the operator supplies a display name and commands only.
+- The workflow session is presented as a selectable `isolated` or `persistent` option rather than a free-text input.

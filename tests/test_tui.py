@@ -5,7 +5,7 @@ from dataclasses import replace
 import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Static
-from textual.widgets import Button, Footer, Input, SelectionList
+from textual.widgets import Button, Footer, Input, SelectionList, TextArea
 
 from dispatch.models import (
     CurrentRebootState,
@@ -18,6 +18,7 @@ from dispatch.models import (
 )
 from dispatch.transport import FailureKind, TransportFailure
 from dispatch.tui import DispatchApp, PasswordPrompt, PreflightFailurePrompt, RemoveAllTargetsPrompt
+from dispatch.workflow_stores import WorkflowRegistry
 
 
 def result() -> TargetResult:
@@ -125,8 +126,43 @@ async def test_initial_menu_is_idle_and_exposes_all_workflows() -> None:
         assert "Action (a)" in displayed(app)
         assert "Inventory (i)" in displayed(app)
         assert "History (h)" in displayed(app)
+        assert "Workflows (w)" in displayed(app)
         await pilot.press("h")
         assert app.view == "history"
+
+
+@pytest.mark.asyncio
+async def test_workflow_menu_exposes_registration_controls(tmp_path) -> None:
+    app = DispatchApp(registry=Registry(), workflow_registry=WorkflowRegistry(tmp_path / "workflows"))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("w")
+        assert app.view == "workflows"
+        for control_id in ("workflow-name", "workflow-session", "workflow-commands", "save-workflow"):
+            assert list(app.query(f"#{control_id}"))
+        assert isinstance(app.query_one("#workflow-session"), SelectionList)
+        assert "Remote Bash workflows" in app._main_content()
+
+
+@pytest.mark.asyncio
+async def test_registering_workflow_writes_ordered_commands_to_registry(tmp_path) -> None:
+    workflow_registry = WorkflowRegistry(tmp_path / "workflows")
+    app = DispatchApp(registry=Registry(), workflow_registry=workflow_registry)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.action_workflows()
+        app.query_one("#workflow-name", Input).value = "Deploy application"
+        session = app.query_one("#workflow-session", SelectionList)
+        session.select("persistent")
+        app.query_one("#workflow-commands", TextArea).text = "prepare_app\ndeploy_app"
+        await pilot.click("#save-workflow")
+        workflows = workflow_registry.load()
+        assert len(workflows) == 1
+        assert workflows[0].id
+        assert workflows[0].session == "persistent"
+        document = next((tmp_path / "workflows").glob("*.toml")).read_text()
+        assert 'command = "prepare_app"' in document
+        assert 'command = "deploy_app"' in document
 
 
 @pytest.mark.asyncio

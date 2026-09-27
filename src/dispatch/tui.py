@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Sequence
 import inspect
 from typing import Protocol
+from uuid import uuid4
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, VerticalScroll
@@ -326,9 +327,8 @@ class DispatchApp(App[None]):
                 Button("Run selected workflow", id="run-workflow", classes="form-control"),
             )
         await self.query_one("#content", VerticalScroll).mount(
-            Input(placeholder="New workflow ID", id="workflow-id", classes="form-control"),
             Input(placeholder="Display name", id="workflow-name", classes="form-control"),
-            Input(placeholder="isolated or persistent", id="workflow-session", classes="form-control"),
+            SelectionList(("Isolated (each step starts a new process)", "isolated"), ("Persistent (share Bash state)", "persistent"), id="workflow-session", classes="form-control"),
             TextArea(id="workflow-commands", classes="form-control"),
             Button("Register workflow (one command per line)", id="save-workflow", classes="form-control"),
         )
@@ -430,9 +430,10 @@ class DispatchApp(App[None]):
             self._refresh()
             return
         try:
-            workflow_id = self.query_one("#workflow-id", Input).value.strip()
+            workflow_id = str(uuid4())
             name = self.query_one("#workflow-name", Input).value.strip()
-            session = self.query_one("#workflow-session", Input).value.strip() or "isolated"
+            selected_session = list(self.query_one("#workflow-session", SelectionList).selected)
+            session = selected_session[0] if selected_session else "isolated"
             commands = [line.strip() for line in self.query_one("#workflow-commands", TextArea).text.splitlines() if line.strip()]
             steps = tuple(ShellStep(f"step-{index}", f"Step {index}", command) for index, command in enumerate(commands, 1))
             self.workflow_registry.save(WorkflowDefinition(workflow_id, name, "shell", session, (), steps))
@@ -662,7 +663,7 @@ class DispatchApp(App[None]):
 
     def _main_content(self) -> str:
         if self.view == "menu":
-            return "Dispatch\n\nAction (a)\nInventory (i)\nHistory (h)\n\nRead-only RPM update discovery."
+            return "Dispatch\n\nAction (a)\nInventory (i)\nHistory (h)\nWorkflows (w)\n\nRead-only RPM update discovery."
         if self.view == "action":
             return "Choose an action\n\nSelect the operation before choosing its hosts.\n\nPress Esc to return to the menu."
         if self.view == "action_hosts":
