@@ -174,6 +174,7 @@ class DispatchApp(App[None]):
         self.history_runs: list[object] = []
         self.workflow_history_runs: list[dict] = []
         self.history_run = None
+        self.workflow_history_run = None
         self.inspection_worker = None
         self.inspection_service = inspection_service
         self.registry = registry
@@ -321,7 +322,12 @@ class DispatchApp(App[None]):
         self._refresh()
         for index, run in enumerate(self.history_runs):
             await self.query_one("#content", VerticalScroll).mount(
-                Button(f"View {run.completed_at}", id=f"history-run-{index}", classes="form-control")
+                Button(f"View inspection {run.completed_at}", id=f"history-run-{index}", classes="form-control")
+            )
+        for index, run in enumerate(self.workflow_history_runs):
+            workflow = run.get("workflow", {})
+            await self.query_one("#content", VerticalScroll).mount(
+                Button(f"View workflow {workflow.get('name', 'unknown')} ({len(run.get('target_results', []))} target(s))", id=f"workflow-history-{index}", classes="form-control")
             )
 
     async def action_workflows(self) -> None:
@@ -433,6 +439,13 @@ class DispatchApp(App[None]):
             self.history_run = self.history_runs[int(event.button.id.removeprefix("history-run-"))]
             await self._clear_controls()
             self.view = "history_detail"
+            self.show_details = False
+            self._refresh()
+            return
+        if event.button.id and event.button.id.startswith("workflow-history-"):
+            self.workflow_history_run = self.workflow_history_runs[int(event.button.id.removeprefix("workflow-history-"))]
+            await self._clear_controls()
+            self.view = "workflow_history_detail"
             self.show_details = False
             self._refresh()
             return
@@ -786,6 +799,7 @@ class DispatchApp(App[None]):
             "workflow_progress": "Workflow execution is in progress.",
             "workflow_results": "Workflow execution results.",
             "history_detail": "Detailed history is on the right.",
+            "workflow_history_detail": "Detailed workflow history is on the right.",
             "progress": "Inspection progress is on the right.",
             "summary": "Detailed results are on the right.",
         }
@@ -825,6 +839,24 @@ class DispatchApp(App[None]):
             return "\n".join(lines)
         if self.view == "history_detail":
             return self._summary(self.history_run.results, "Inspection history")
+        if self.view == "workflow_history_detail":
+            run = self.workflow_history_run or {}
+            workflow = run.get("workflow", {})
+            lines = [f"Workflow history: {workflow.get('name', 'unknown')}", ""]
+            for result in run.get("target_results", []):
+                lines.append(f"{result.get('target', {}).get('name', 'unknown')}: {result.get('outcome', 'unknown')}")
+                if result.get("explanation"):
+                    lines.append(f"  Error: {result['explanation']}")
+                for step in result.get("steps", []):
+                    lines.append(f"  {step.get('name', 'unknown')}: {step.get('outcome', 'unknown')} (exit {step.get('exit_status')})")
+                    lines.append(f"    Command: {next((item.get('command') for item in workflow.get('steps', []) + workflow.get('startup', []) if item.get('id') == step.get('step_id')), 'unknown')}")
+                    if step.get("explanation"):
+                        lines.append(f"    {step['explanation']}")
+                    if step.get("stdout"):
+                        lines.extend(f"    stdout: {line}" for line in step["stdout"].splitlines()[-8:])
+                    if step.get("stderr"):
+                        lines.extend(f"    stderr: {line}" for line in step["stderr"].splitlines()[-8:])
+            return "\n".join(lines)
         if self.view == "workflows":
             workflows = "\n".join(f"{item.id}: {item.name} ({item.session})" for item in self.saved_workflows) or "No registered workflows."
             return f"Remote Bash workflows\n\n{workflows}\n\nChoose Create, Edit, Delete, or Run."
@@ -845,6 +877,8 @@ class DispatchApp(App[None]):
                     lines.append(f"  Error: {result.explanation}")
                 for step in result.steps:
                     lines.append(f"  {step.name}: {step.outcome} (exit {step.exit_status})")
+                    command = next((item.command for item in (*self.selected_workflow.startup, *self.selected_workflow.steps) if item.id == step.step_id), "unknown") if self.selected_workflow else "unknown"
+                    lines.append(f"    Command: {command}")
                     if step.explanation:
                         lines.append(f"    {step.explanation}")
                     if step.stdout:
