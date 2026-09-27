@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -12,6 +13,7 @@ from .transport import CompletedCommand
 from .workflow_models import ShellStep, StepResult, WorkflowDefinition, WorkflowTargetResult
 
 OUTPUT_LIMIT = 100_000
+COMMAND_TIMEOUT_SECONDS = 60
 
 
 def _timestamp() -> str:
@@ -27,8 +29,9 @@ class CommandSession(Protocol):
 class ShellWorkflowExecutor:
     """Run ordered startup and shell commands for one target."""
 
-    def __init__(self, output_limit: int = OUTPUT_LIMIT) -> None:
+    def __init__(self, output_limit: int = OUTPUT_LIMIT, command_timeout: float = COMMAND_TIMEOUT_SECONDS) -> None:
         self.output_limit = output_limit
+        self.command_timeout = command_timeout
 
     async def execute(self, workflow: WorkflowDefinition, target: TargetSnapshot, session: CommandSession, on_step=None) -> WorkflowTargetResult:
         results: list[StepResult] = []
@@ -59,7 +62,9 @@ class ShellWorkflowExecutor:
     async def _run_step(self, step: ShellStep, session: CommandSession) -> StepResult:
         started = _timestamp()
         try:
-            completed = await session.run(step.command)
+            completed = await asyncio.wait_for(session.run(step.command), timeout=self.command_timeout)
+        except asyncio.TimeoutError:
+            return StepResult(step.id, step.name, "failed", started, _timestamp(), None, "", "", f"Command timed out after {self.command_timeout:g} seconds. The command may require interactive input or may not terminate.")
         except Exception as error:
             return StepResult(step.id, step.name, "failed", started, _timestamp(), None, "", "", f"Command execution failed: {error}")
         return StepResult(

@@ -132,6 +132,23 @@ async def test_workflow_service_persists_each_completed_run(tmp_path: Path) -> N
     assert runs[0]["target_results"][0]["outcome"] == "success"
 
 
+
+
+@pytest.mark.asyncio
+async def test_executor_reports_non_terminating_commands(tmp_path: Path) -> None:
+    class Session:
+        async def run(self, command):
+            await asyncio.sleep(1)
+
+        async def close(self):
+            pass
+
+    definition = WorkflowDefinition("hang", "Hang", "shell", "isolated", (), (ShellStep("step", "Step", "hang"),))
+    result = await ShellWorkflowExecutor(command_timeout=0.01).execute(definition, TargetSnapshot("one", "One", "one@host"), Session())
+
+    assert result.outcome == "failed"
+    assert "timed out" in result.steps[0].explanation
+
 @pytest.mark.asyncio
 async def test_workflow_service_reports_connection_failures_to_ui(tmp_path: Path) -> None:
     class Failure:
