@@ -318,7 +318,7 @@ class DispatchApp(App[None]):
         await self._clear_controls()
         self.view = "history"
         self.history_runs = self.history_store.list_runs() if self.history_store is not None else []
-        workflow_store = self.workflow_history_store
+        workflow_store = self.workflow_history_store or getattr(self.workflow_service, "history_store", None)
         history_dir = getattr(self.history_store, "path", None) if self.history_store is not None else None
         if workflow_store is None:
             from .stores import history_path
