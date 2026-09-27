@@ -159,6 +159,9 @@ class SSHTransport:
     async def open_bash_session(self, channel: AuthenticatedChannel) -> PersistentBashSession:
         """Open a non-login Bash process without implicit startup files."""
         process = await channel.connection.create_process("/bin/bash --noprofile --norc -s")
+        process.stdin.write("shopt -s expand_aliases\n")
+        if hasattr(process.stdin, "drain"):
+            await process.stdin.drain()
         return PersistentBashSession(process)
 
     async def run(self, channel: AuthenticatedChannel, command: str) -> CompletedCommand:

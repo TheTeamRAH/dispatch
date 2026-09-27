@@ -96,6 +96,27 @@ async def test_connect_timeout_becomes_connection_failure(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_persistent_bash_session_enables_alias_expansion() -> None:
+    class Stdin:
+        def __init__(self):
+            self.writes = []
+
+        def write(self, value):
+            self.writes.append(value)
+
+        async def drain(self):
+            pass
+
+    process = Mock(stdin=Stdin())
+    connection = Mock(create_process=AsyncMock(return_value=process))
+    channel = AuthenticatedChannel(target(), connection)
+
+    await SSHTransport().open_bash_session(channel)
+
+    assert process.stdin.writes == ["shopt -s expand_aliases\n"]
+
+
+@pytest.mark.asyncio
 async def test_run_and_close_use_retained_connection() -> None:
     process = Mock(exit_status=100, stdout="updates", stderr="")
     connection = Mock(run=AsyncMock(return_value=process), close=Mock(), wait_closed=AsyncMock())
