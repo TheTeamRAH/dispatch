@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 from collections.abc import Sequence
 import inspect
 from typing import Protocol
+from uuid import uuid4
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, VerticalScroll
 from textual.events import Resize
 from textual.markup import escape
 from textual.screen import ModalScreen
-from textual.widgets import Button, Header, Input, Label, SelectionList, Static
+from textual.widgets import Button, Header, Input, Label, RadioButton, RadioSet, SelectionList, Static, TextArea
 
 from .models import CurrentRebootState, RebootForecast, TargetResult
+from .workflow_models import ShellStep, WorkflowDefinition
 
 
 class HistoryReader(Protocol):
@@ -80,6 +83,25 @@ class RemoveAllTargetsPrompt(ModalScreen[bool]):
         self.dismiss(False)
 
 
+class WorkflowRunPrompt(ModalScreen[bool]):
+    """Require deliberate confirmation before remote shell execution."""
+
+    def __init__(self, workflow: WorkflowDefinition, target_count: int) -> None:
+        super().__init__()
+        self.workflow = workflow
+        self.target_count = target_count
+
+    def compose(self) -> ComposeResult:
+        with Container(id="dialog"):
+            yield Label(f"Run {self.workflow.name} on {self.target_count} target(s) using {self.workflow.session} Bash session?")
+            yield Button("Run workflow", id="confirm-workflow")
+            yield Button("Cancel", id="cancel-workflow")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "confirm-workflow")
+
+
+
 class DispatchApp(App[None]):
     """Idle menu and result views; workflows can supply normalized results."""
 
@@ -106,6 +128,8 @@ class DispatchApp(App[None]):
     .status-warning { color: #FFD700; }
     .status-error { color: #FF4500; }
     Input, SelectionList { border: round #A684E8; background: #000000; color: #f0eaff; }
+    #content TextArea { height: 6; border: round #A684E8; background: #000000; color: #f0eaff; }
+    #content TextArea:focus { border: round #C45AFF; }
     #content SelectionList { height: 4; }
     Input:focus, SelectionList:focus { border: round #C45AFF; }
     Button { background: #000000; color: #f0eaff; border: round #A684E8; }
@@ -127,31 +151,45 @@ class DispatchApp(App[None]):
     Screen.-compact #content { height: 1fr; }
     Screen.-compact #content SelectionList { height: 4; }
     Screen.-compact #status-pane, Screen.-compact #detail-pane { display: none; }
-    PasswordPrompt, PreflightFailurePrompt, RemoveAllTargetsPrompt { align: center middle; background: #000000; }
-    PasswordPrompt #dialog, PreflightFailurePrompt #dialog, RemoveAllTargetsPrompt #dialog { width: 70%; height: auto; padding: 1 2; background: #000000; border: round #C45AFF; }
+    PasswordPrompt, PreflightFailurePrompt, RemoveAllTargetsPrompt, WorkflowRunPrompt { align: center middle; background: #000000; }
+    PasswordPrompt #dialog, PreflightFailurePrompt #dialog, RemoveAllTargetsPrompt #dialog, WorkflowRunPrompt #dialog { width: 70%; height: auto; padding: 1 2; background: #000000; border: round #C45AFF; }
     Screen.-narrow #dialog { width: 100%; }
     """
     BINDINGS = [
         ("a", "action", "Action"),
         ("i", "inventory", "Inventory"),
         ("h", "history", "History"),
+        ("w", "workflows", "Workflows"),
         ("d", "toggle_details", "Details"),
         ("escape", "menu", "Menu"),
     ]
 
-    def __init__(self, results: Sequence[TargetResult] = (), history_store: HistoryReader | None = None, inspection_service=None, registry=None) -> None:
+    def __init__(self, results: Sequence[TargetResult] = (), history_store: HistoryReader | None = None, inspection_service=None, registry=None, workflow_registry=None, workflow_service=None, workflow_history_store=None):
         super().__init__()
         self.results = list(results)
         self.view = "summary" if results else "menu"
         self.show_details = False
         self.discovery_started = False
         self.history_store = history_store
+        self.workflow_history_store = workflow_history_store
         self.history_runs: list[object] = []
+        self.workflow_history_runs: list[dict] = []
         self.history_run = None
+        self.workflow_history_run = None
+        self.workflow_active_record = None
         self.inspection_worker = None
         self.inspection_service = inspection_service
         self.registry = registry
+        self.workflow_registry = workflow_registry
+        self.workflow_service = workflow_service
         self.saved_targets = []
+        self.saved_workflows = []
+        self.workflow_results = []
+        self.workflow_current = ""
+        self.workflow_output: list[str] = []
+        self.workflow_spinner = 0
+        self.editing_workflow_id = None
+        self.selected_workflow = None
         self.management_message = ""
         self.selected_action = None
         self.inspection_total = 0
@@ -282,11 +320,69 @@ class DispatchApp(App[None]):
         await self._clear_controls()
         self.view = "history"
         self.history_runs = self.history_store.list_runs() if self.history_store is not None else []
+        workflow_store = self.workflow_history_store or getattr(self.workflow_service, "history_store", None)
+        history_dir = getattr(self.history_store, "path", None) if self.history_store is not None else None
+        if workflow_store is None:
+            from .stores import history_path
+            from .workflow_stores import WorkflowHistoryStore
+
+            workflow_store = WorkflowHistoryStore((history_path().parent if history_dir is None else history_dir.parent) / "workflow-history")
+        self.workflow_history_runs = workflow_store.list_runs() if workflow_store is not None else []
+        if self.workflow_active_record is not None and self.workflow_active_record not in self.workflow_history_runs:
+            self.workflow_history_runs.insert(0, self.workflow_active_record)
         self._refresh()
         for index, run in enumerate(self.history_runs):
             await self.query_one("#content", VerticalScroll).mount(
-                Button(f"View {run.completed_at}", id=f"history-run-{index}", classes="form-control")
+                Button(f"View inspection {run.completed_at}", id=f"history-run-{index}", classes="form-control")
             )
+        for index, run in enumerate(self.workflow_history_runs):
+            workflow = run.get("workflow", {})
+            await self.query_one("#content", VerticalScroll).mount(
+                Button(f"View workflow {workflow.get('name', 'unknown')} ({len(run.get('target_results', []))} target(s))", id=f"workflow-history-{index}", classes="form-control")
+            )
+
+    async def action_workflows(self) -> None:
+        await self._clear_controls()
+        self.view = "workflows"
+        self.editing_workflow_id = None
+        self.saved_workflows = self.workflow_registry.load() if self.workflow_registry is not None else []
+        self.saved_targets = self.registry.load() if self.registry is not None else []
+        self._refresh()
+        pane = self.query_one("#content", VerticalScroll)
+        if self.saved_workflows:
+            choices = [(f"{item.name} ({item.session})", item.id) for item in self.saved_workflows]
+            await pane.mount(SelectionList(*choices, id="saved-workflows", classes="form-control"))
+        await pane.mount(
+            Button("Run selected workflow", id="run-workflow", classes="form-control"),
+            Button("Edit selected workflow", id="edit-workflow", classes="form-control"),
+            Button("Delete selected workflow", id="delete-workflow", classes="form-control"),
+            Button("Create new workflow", id="create-workflow", classes="form-control"),
+        )
+
+    async def _open_workflow_form(self, workflow: WorkflowDefinition | None = None) -> None:
+        await self._clear_controls()
+        self.view = "workflow_form"
+        self.editing_workflow_id = workflow.id if workflow is not None else None
+        self._refresh()
+        startup = "\n".join(step.command for step in workflow.startup) if workflow else ""
+        commands = "\n".join(step.command for step in workflow.steps) if workflow else ""
+        session = RadioSet(
+            RadioButton("Isolated (each step starts a new process)", value=workflow is None or workflow.session == "isolated", id="isolated"),
+            RadioButton("Persistent (share Bash state)", value=workflow is not None and workflow.session == "persistent", id="persistent"),
+            id="workflow-session", classes="form-control",
+        )
+        await self.query_one("#content", VerticalScroll).mount(
+            Input(value=workflow.name if workflow else "", placeholder="Display name", id="workflow-name", classes="form-control"),
+            session,
+            Label("Startup commands (optional, one command per line)", id="workflow-startup-label", classes="form-control"),
+            TextArea(startup, placeholder="Enter startup commands, one per line", read_only=False, id="workflow-startup-commands", classes="form-control"),
+            Label("Workflow commands (one command per line)", id="workflow-commands-label", classes="form-control"),
+            TextArea(commands, placeholder="Enter workflow commands, one per line", read_only=False, id="workflow-commands", classes="form-control"),
+            Button("Save workflow", id="save-workflow", classes="form-control"),
+            Button("Cancel", id="cancel-workflow-form", classes="form-control"),
+        )
+        self.set_focus(self.query_one("#workflow-name", Input))
+
 
     async def action_menu(self) -> None:
         await self._clear_controls()
@@ -357,11 +453,71 @@ class DispatchApp(App[None]):
             self.show_details = False
             self._refresh()
             return
+        if event.button.id and event.button.id.startswith("workflow-history-"):
+            self.workflow_history_run = self.workflow_history_runs[int(event.button.id.removeprefix("workflow-history-"))]
+            await self._clear_controls()
+            self.view = "workflow_history_detail"
+            self.show_details = False
+            self._refresh()
+            return
         if event.button.id == "remove-all-targets":
             self.run_worker(self._remove_all_targets(), exclusive=True)
             return
         if event.button.id in {"save-target", "edit-target", "remove-target"}:
             self._manage_target(event.button.id)
+            return
+        if event.button.id == "create-workflow":
+            await self._open_workflow_form()
+            return
+        if event.button.id == "cancel-workflow-form":
+            await self.action_workflows()
+            return
+        if event.button.id in {"edit-workflow", "delete-workflow"}:
+            if not list(self.query("#saved-workflows")):
+                self.management_message = "No registered workflows."
+                self._refresh()
+                return
+            selected = set(self.query_one("#saved-workflows", SelectionList).selected)
+            workflows = [item for item in self.saved_workflows if item.id in selected]
+            if event.button.id == "delete-workflow":
+                if not workflows:
+                    self.management_message = "Select at least one workflow."
+                    self._refresh()
+                    return
+                for workflow in workflows:
+                    self.workflow_registry.remove(workflow.id)
+                await self.action_workflows()
+                return
+            if len(workflows) != 1:
+                self.management_message = "Select exactly one workflow to edit."
+                self._refresh()
+                return
+            if event.button.id == "edit-workflow":
+                await self._open_workflow_form(workflows[0])
+            return
+        if event.button.id == "save-workflow":
+            await self._save_workflow()
+            return
+        if event.button.id == "run-workflow" and self.workflow_service is not None:
+            selected = set(self.query_one("#saved-workflows", SelectionList).selected)
+            workflows = [item for item in self.saved_workflows if item.id in selected]
+            if len(workflows) == 1:
+                await self._open_workflow_targets(workflows[0])
+            return
+        if event.button.id == "cancel-workflow-targets":
+            await self.action_workflows()
+            return
+        if event.button.id == "confirm-run-workflow" and self.selected_workflow is not None:
+            selected = set(self.query_one("#workflow-targets", SelectionList).selected)
+            targets = [target for target in self.saved_targets if target.id in selected]
+            if targets:
+                self.push_screen(
+                    WorkflowRunPrompt(self.selected_workflow, len(targets)),
+                    callback=lambda confirmed, workflow=self.selected_workflow, selected_targets=targets: (
+                        self.run_worker(self._run_workflow(workflow, selected_targets), exclusive=True)
+                        if confirmed else None
+                    ),
+                )
             return
         if event.button.id != "inspect-saved" or self.inspection_service is None:
             return
@@ -369,6 +525,101 @@ class DispatchApp(App[None]):
         targets = [target for target in self.saved_targets if target.id in selected]
         if targets:
             await self._start_inspection(targets)
+
+    async def _save_workflow(self) -> None:
+        if self.workflow_registry is None:
+            self.management_message = "Workflow registry is unavailable."
+            self._refresh()
+            return
+        try:
+            workflow_id = self.editing_workflow_id or str(uuid4())
+            name = self.query_one("#workflow-name", Input).value.strip()
+            session = "persistent" if self.query_one("#persistent", RadioButton).value else "isolated"
+            startup_commands = [line.strip() for line in self.query_one("#workflow-startup-commands", TextArea).text.splitlines() if line.strip()]
+            if startup_commands and session == "isolated":
+                raise ValueError("Startup commands require Persistent session mode so their aliases, functions, and environment are shared with workflow commands.")
+            commands = [line.strip() for line in self.query_one("#workflow-commands", TextArea).text.splitlines() if line.strip()]
+            startup = tuple(ShellStep(f"startup-{index}", f"Startup {index}", command) for index, command in enumerate(startup_commands, 1))
+            steps = tuple(ShellStep(f"step-{index}", f"Step {index}", command) for index, command in enumerate(commands, 1))
+            self.workflow_registry.save(WorkflowDefinition(workflow_id, name, "shell", session, startup, steps))
+            self.saved_workflows = self.workflow_registry.load()
+            self.management_message = f"Saved workflow {name}."
+            await self.action_workflows()
+        except ValueError as error:
+            self.management_message = str(error)
+        self._refresh()
+
+    async def _open_workflow_targets(self, workflow: WorkflowDefinition) -> None:
+        await self._clear_controls()
+        self.selected_workflow = workflow
+        self.view = "workflow_targets"
+        self._refresh()
+        pane = self.query_one("#content", VerticalScroll)
+        if self.saved_targets:
+            choices = [(f"{target.name} ({target.ssh_destination})", target.id) for target in self.saved_targets]
+            await pane.mount(SelectionList(*choices, id="workflow-targets", classes="form-control"))
+        await pane.mount(
+            Button("Run workflow on selected hosts", id="confirm-run-workflow", classes="form-control"),
+            Button("Cancel", id="cancel-workflow-targets", classes="form-control"),
+        )
+
+    async def _confirm_and_run_workflow(self, workflow: WorkflowDefinition, targets) -> None:
+        if await self.push_screen_wait(WorkflowRunPrompt(workflow, len(targets))):
+            await self._run_workflow(workflow, targets)
+
+    async def _run_workflow(self, workflow: WorkflowDefinition, targets) -> None:
+        await self._clear_controls()
+        self.view = "workflow_progress"
+        self.workflow_current = ""
+        self.workflow_output = []
+        self.workflow_spinner = 0
+        self.workflow_active_record = {
+            "status": "running",
+            "workflow": workflow.to_dict(),
+            "target_results": [],
+        }
+        self.workflow_history_runs = [self.workflow_active_record, *self.workflow_history_runs]
+        self._start_spinner()
+        self._refresh()
+        try:
+            await self.workflow_service.run(
+                workflow,
+                targets,
+                self._password_not_available,
+                self._workflow_result,
+                self._workflow_progress,
+                self._workflow_output,
+            )
+        finally:
+            self._stop_spinner()
+            if self.workflow_active_record is not None:
+                self.workflow_active_record["status"] = "completed" if all(item.outcome == "success" for item in self.workflow_results) else "failed"
+                self.workflow_active_record["target_results"] = [item.to_dict() for item in self.workflow_results]
+        self.view = "workflow_results"
+        self._refresh()
+
+    def _workflow_result(self, result) -> None:
+        self.workflow_results.append(result)
+        self._refresh()
+
+    def _workflow_progress(self, target, step, result) -> None:
+        self.workflow_current = f"RUNNING — {target.name}: {step.name} — {step.command}"
+        if result is not None:
+            status = result.outcome
+            kind = "startup" if step.id.startswith("startup-") else "command"
+            self.workflow_output.append(f"{target.name} / {kind} / {step.name}: {status}")
+            if result.stdout:
+                self.workflow_output.extend(result.stdout.splitlines()[-8:])
+            if result.stderr:
+                self.workflow_output.extend(result.stderr.splitlines()[-8:])
+        if self.view == "workflow_progress":
+            self._refresh()
+
+    def _workflow_output(self, target, step, line) -> None:
+        self.workflow_output.append(f"{target.name} / {step.name}: {line.rstrip()}")
+        if self.view == "workflow_progress":
+            self._refresh()
+
 
     async def _remove_all_targets(self) -> None:
         if self.registry is None:
@@ -478,10 +729,11 @@ class DispatchApp(App[None]):
             self._spinner_timer = None
 
     def _advance_spinner(self) -> None:
-        if self.inspection_worker is None and self.view != "progress":
+        if self.inspection_worker is None and self.view != "progress" and self.view != "workflow_progress":
             self._stop_spinner()
             return
         self._spinner_index = (self._spinner_index + 1) % len(self._spinner_frames)
+        self.workflow_spinner = self._spinner_index
         if self.is_mounted:
             self.query_one("#navigation-pane", Static).update(self._navigation())
 
@@ -507,6 +759,9 @@ class DispatchApp(App[None]):
         if self.view == "progress":
             frame = self._spinner_frames[self._spinner_index]
             return f"{frame} Inspecting targets (read-only) — {self.completed_targets}/{self.inspection_total} complete"
+        if self.view == "workflow_progress":
+            frame = self._spinner_frames[self.workflow_spinner]
+            return f"{frame} Running workflow — {len(self.workflow_results)} target(s) complete"
         activity = {
             "menu": "Ready",
             "action": "Select an action",
@@ -553,7 +808,7 @@ class DispatchApp(App[None]):
         return ""
 
     def _content(self) -> str:
-        if self._is_compact() and self.view in {"menu", "summary", "progress", "history_detail"}:
+        if self.view in {"workflow_progress", "workflow_results", "workflow_history_detail"} or (self._is_compact() and self.view in {"menu", "summary", "progress", "history_detail"}):
             return self._main_content()
         return self._posting_context()
 
@@ -567,7 +822,13 @@ class DispatchApp(App[None]):
             "inventory": "Choose an inventory operation below.",
             "manage": "Manage inventory below.",
             "history": "Select a persisted run below.",
+            "workflows": "Choose create, edit, delete, or run.",
+            "workflow_form": "Define the workflow and its ordered commands.",
+            "workflow_targets": "Select the hosts for this workflow.",
+            "workflow_progress": "Workflow execution is in progress.",
+            "workflow_results": "Workflow execution results.",
             "history_detail": "Detailed history is on the right.",
+            "workflow_history_detail": "Detailed workflow history is on the right.",
             "progress": "Inspection progress is on the right.",
             "summary": "Detailed results are on the right.",
         }
@@ -575,7 +836,7 @@ class DispatchApp(App[None]):
 
     def _main_content(self) -> str:
         if self.view == "menu":
-            return "Dispatch\n\nAction (a)\nInventory (i)\nHistory (h)\n\nRead-only RPM update discovery."
+            return "Dispatch\n\nAction (a)\nInventory (i)\nHistory (h)\nWorkflows (w)\n\nRead-only RPM update discovery."
         if self.view == "action":
             return "Choose an action\n\nSelect the operation before choosing its hosts.\n\nPress Esc to return to the menu."
         if self.view == "action_hosts":
@@ -593,15 +854,68 @@ class DispatchApp(App[None]):
             targets = "\n".join(f"{target.id}: {target.name} ({target.ssh_destination})" for target in self.saved_targets) or "No saved targets."
             return f"Manage saved targets\n\nSaved targets:\n{targets}\n\nEnter ID, display name, and destination to save or edit. Enter only ID to remove.{message}\n\nPress Esc to return to the menu."
         if self.view == "history":
-            if not self.history_runs:
-                return "Inspection history\n\nNo local history loaded.\n\nPress Esc to return to the menu."
-            lines = ["Inspection history", ""]
+            if not self.history_runs and not self.workflow_history_runs:
+                return "History\n\nNo local inspection or workflow history loaded.\n\nPress Esc to return to the menu."
+            lines = ["History", ""]
             for run in self.history_runs:
-                lines.append(f"{run.completed_at}: {len(run.results)} target(s)")
+                lines.append(f"Inspection — {run.completed_at}: {len(run.results)} target(s)")
+            for run in self.workflow_history_runs:
+                workflow = run.get("workflow", {})
+                targets = run.get("target_results", [])
+                outcomes = ", ".join(f"{item.get('target', {}).get('name', 'unknown')}: {item.get('outcome', 'unknown')}" for item in targets)
+                state = run.get("status", "completed")
+                lines.append(f"Workflow — {workflow.get('name', 'unknown')} ({state}): {outcomes or 'no target results'}")
             lines.append("\nPress Esc to return to the menu.")
             return "\n".join(lines)
         if self.view == "history_detail":
             return self._summary(self.history_run.results, "Inspection history")
+        if self.view == "workflow_history_detail":
+            run = self.workflow_history_run or {}
+            workflow = run.get("workflow", {})
+            lines = [f"Workflow history: {workflow.get('name', 'unknown')}", ""]
+            for result in run.get("target_results", []):
+                lines.append(f"{result.get('target', {}).get('name', 'unknown')}: {result.get('outcome', 'unknown')}")
+                if result.get("explanation"):
+                    lines.append(f"  Error: {result['explanation']}")
+                for step in result.get("steps", []):
+                    lines.append(f"  {step.get('name', 'unknown')}: {step.get('outcome', 'unknown')} (exit {step.get('exit_status')})")
+                    lines.append(f"    Command: {next((item.get('command') for item in workflow.get('steps', []) + workflow.get('startup', []) if item.get('id') == step.get('step_id')), 'unknown')}")
+                    if step.get("explanation"):
+                        lines.append(f"    {step['explanation']}")
+                    if step.get("stdout"):
+                        lines.extend(f"    stdout: {line}" for line in step["stdout"].splitlines()[-8:])
+                    if step.get("stderr"):
+                        lines.extend(f"    stderr: {line}" for line in step["stderr"].splitlines()[-8:])
+            return "\n".join(lines)
+        if self.view == "workflows":
+            workflows = "\n".join(f"{item.id}: {item.name} ({item.session})" for item in self.saved_workflows) or "No registered workflows."
+            return f"Remote Bash workflows\n\n{workflows}\n\nChoose Create, Edit, Delete, or Run."
+        if self.view == "workflow_form":
+            mode = "Edit" if self.editing_workflow_id else "Create"
+            return f"{mode} remote Bash workflow\n\nStartup commands and workflow commands are entered one per line."
+        if self.view == "workflow_targets":
+            return "Select hosts for workflow execution\n\nChoose one or more saved SSH targets before continuing."
+        if self.view == "workflow_progress":
+            current = self.workflow_current or "Waiting for the first command to start..."
+            output = "\n".join(self.workflow_output[-20:]) or "No output received yet; the command may be silent or waiting for input."
+            return f"Workflow execution in progress\n\nCurrent command:\n{current}\n\nRecent output:\n{output}"
+        if self.view == "workflow_results":
+            lines = ["Workflow results", ""]
+            for result in self.workflow_results:
+                lines.append(f"{result.target['name']}: {result.outcome}")
+                if result.explanation:
+                    lines.append(f"  Error: {result.explanation}")
+                for step in result.steps:
+                    lines.append(f"  {step.name}: {step.outcome} (exit {step.exit_status})")
+                    command = next((item.command for item in (*self.selected_workflow.startup, *self.selected_workflow.steps) if item.id == step.step_id), "unknown") if self.selected_workflow else "unknown"
+                    lines.append(f"    Command: {command}")
+                    if step.explanation:
+                        lines.append(f"    {step.explanation}")
+                    if step.stdout:
+                        lines.extend(f"    stdout: {line}" for line in step.stdout.splitlines()[-8:])
+                    if step.stderr:
+                        lines.extend(f"    stderr: {line}" for line in step.stderr.splitlines()[-8:])
+            return "\n".join(lines)
         if self.view == "progress":
             return self._summary(self.results, "Inspection in progress") + "\n\nConnecting and querying the selected target(s). No remote changes will be made."
         return self._summary(self.results)

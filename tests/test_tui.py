@@ -5,7 +5,7 @@ from dataclasses import replace
 import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Static
-from textual.widgets import Button, Footer, Input, SelectionList
+from textual.widgets import Button, Footer, Input, RadioButton, RadioSet, SelectionList, TextArea
 
 from dispatch.models import (
     CurrentRebootState,
@@ -17,7 +17,9 @@ from dispatch.models import (
     TargetSnapshot,
 )
 from dispatch.transport import FailureKind, TransportFailure
-from dispatch.tui import DispatchApp, PasswordPrompt, PreflightFailurePrompt, RemoveAllTargetsPrompt
+from dispatch.tui import DispatchApp, PasswordPrompt, PreflightFailurePrompt, RemoveAllTargetsPrompt, WorkflowRunPrompt
+from dispatch.workflow_stores import WorkflowRegistry
+from dispatch.workflow_models import ShellStep, WorkflowDefinition
 
 
 def result() -> TargetResult:
@@ -125,8 +127,130 @@ async def test_initial_menu_is_idle_and_exposes_all_workflows() -> None:
         assert "Action (a)" in displayed(app)
         assert "Inventory (i)" in displayed(app)
         assert "History (h)" in displayed(app)
+        assert "Workflows (w)" in displayed(app)
         await pilot.press("h")
         assert app.view == "history"
+
+
+@pytest.mark.asyncio
+async def test_workflow_menu_exposes_registration_controls(tmp_path) -> None:
+    app = DispatchApp(registry=Registry(), workflow_registry=WorkflowRegistry(tmp_path / "workflows"))
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("w")
+        assert app.view == "workflows"
+        for control_id in ("run-workflow", "edit-workflow", "delete-workflow", "create-workflow"):
+            assert list(app.query(f"#{control_id}"))
+        await pilot.click("#create-workflow")
+        for control_id in ("workflow-name", "workflow-session", "workflow-startup-label", "workflow-startup-commands", "workflow-commands-label", "workflow-commands", "save-workflow", "cancel-workflow-form"):
+            assert list(app.query(f"#{control_id}"))
+        assert isinstance(app.query_one("#workflow-session"), RadioSet)
+        assert app.focused is app.query_one("#workflow-name", Input)
+        await pilot.click("#workflow-startup-commands")
+        await pilot.press(*"source ~/.bash_aliases")
+        assert app.query_one("#workflow-startup-commands", TextArea).text == "source ~/.bash_aliases"
+        app.set_focus(app.query_one("#workflow-commands", TextArea))
+        await pilot.press(*"deploy_app")
+        assert app.query_one("#workflow-commands", TextArea).text == "deploy_app"
+        app.query_one("#persistent", RadioButton).value = True
+        app.query_one("#isolated", RadioButton).value = False
+        assert "Create remote Bash workflow" in app._main_content()
+
+
+@pytest.mark.asyncio
+async def test_registering_workflow_writes_ordered_commands_to_registry(tmp_path) -> None:
+    workflow_registry = WorkflowRegistry(tmp_path / "workflows")
+    app = DispatchApp(registry=Registry(), workflow_registry=workflow_registry)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.action_workflows()
+        await app._open_workflow_form()
+        app.query_one("#workflow-name", Input).value = "Deploy application"
+        session = app.query_one("#workflow-session", RadioSet)
+        app.query_one("#persistent", RadioButton).value = True
+        app.query_one("#isolated", RadioButton).value = False
+        app.query_one("#workflow-startup-commands", TextArea).text = "shopt -s expand_aliases\nsource ~/.bash_aliases"
+        app.query_one("#workflow-commands", TextArea).text = "prepare_app\ndeploy_app"
+        await app._save_workflow()
+        workflows = workflow_registry.load()
+        assert len(workflows) == 1
+        assert workflows[0].id
+        assert workflows[0].session == "persistent"
+        document = next((tmp_path / "workflows").glob("*.toml")).read_text()
+        assert 'command = "shopt -s expand_aliases"' in document
+        assert 'command = "source ~/.bash_aliases"' in document
+        assert 'command = "prepare_app"' in document
+        assert 'command = "deploy_app"' in document
+
+
+@pytest.mark.asyncio
+async def test_run_workflow_requires_host_selection(tmp_path) -> None:
+    workflow_registry = WorkflowRegistry(tmp_path / "workflows")
+    workflow_registry.save(WorkflowDefinition("deploy", "Deploy", steps=(ShellStep("step", "Step", "true"),)))
+    class Service:
+        async def run(self, workflow, targets, password_provider, on_result, on_progress, on_output):
+            return []
+
+    app = DispatchApp(registry=Registry(), workflow_registry=workflow_registry, workflow_service=Service())
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.action_workflows()
+        app.query_one("#saved-workflows", SelectionList).select("deploy")
+        await app.on_button_pressed(Button.Pressed(app.query_one("#run-workflow")))
+        assert app.view == "workflow_targets"
+        assert [choice.value for choice in app.query_one("#workflow-targets", SelectionList).options] == ["one", "two"]
+        assert list(app.query("#confirm-run-workflow"))
+        app.query_one("#workflow-targets", SelectionList).select("one")
+        await app.on_button_pressed(Button.Pressed(app.query_one("#confirm-run-workflow")))
+        await pilot.pause()
+        assert isinstance(app.screen, WorkflowRunPrompt)
+        await app.screen.dismiss(True)
+        await app._run_workflow(app.saved_workflows[0], [app.saved_targets[0]])
+        assert app.view == "workflow_results"
+        assert not list(app.query("#workflow-targets"))
+
+
+@pytest.mark.asyncio
+async def test_workflow_edit_and_delete_actions_are_separate_from_create(tmp_path) -> None:
+    workflow_registry = WorkflowRegistry(tmp_path / "workflows")
+    app = DispatchApp(registry=Registry(), workflow_registry=workflow_registry)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.action_workflows()
+        await app._open_workflow_form()
+        app.query_one("#workflow-name", Input).value = "Original"
+        app.query_one("#workflow-commands", TextArea).text = "true"
+        await app._save_workflow()
+        workflow = workflow_registry.load()[0]
+        await pilot.pause()
+        app.query_one("#saved-workflows", SelectionList).select(workflow.id)
+        await pilot.pause()
+        await pilot.click("#edit-workflow")
+        assert app.view == "workflow_form"
+        assert app.query_one("#workflow-name", Input).value == "Original"
+        app.query_one("#workflow-name", Input).value = "Edited"
+        await app._save_workflow()
+        assert workflow_registry.load()[0].name == "Edited"
+        app.query_one("#saved-workflows", SelectionList).select(workflow.id)
+        await pilot.pause()
+        await app.on_button_pressed(Button.Pressed(app.query_one("#delete-workflow")))
+        assert workflow_registry.load() == []
+
+
+@pytest.mark.asyncio
+async def test_delete_removes_all_selected_workflows(tmp_path) -> None:
+    workflow_registry = WorkflowRegistry(tmp_path / "workflows")
+    workflow_registry.save(WorkflowDefinition("one", "One", steps=(ShellStep("step", "Step", "true"),)))
+    workflow_registry.save(WorkflowDefinition("two", "Two", steps=(ShellStep("step", "Step", "true"),)))
+    app = DispatchApp(registry=Registry(), workflow_registry=workflow_registry)
+
+    async with app.run_test(size=(120, 40)):
+        await app.action_workflows()
+        selector = app.query_one("#saved-workflows", SelectionList)
+        selector.select("one")
+        selector.select("two")
+        await app.on_button_pressed(Button.Pressed(app.query_one("#delete-workflow")))
+        assert workflow_registry.load() == []
 
 
 @pytest.mark.asyncio
@@ -258,6 +382,20 @@ async def test_history_view_reads_local_store_without_starting_discovery() -> No
         assert history.calls == 1
         assert "2026-09-18T18:58:00Z" in displayed(app)
         assert app.discovery_started is False
+
+
+
+
+@pytest.mark.asyncio
+async def test_history_view_includes_workflow_runs() -> None:
+    class WorkflowHistory:
+        def list_runs(self):
+            return [{"workflow": {"name": "Deploy"}, "target_results": [{"target": {"name": "host-1"}, "outcome": "failed"}]}]
+
+    app = DispatchApp(workflow_history_store=WorkflowHistory())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("h")
+        assert "Workflow — Deploy (completed): host-1: failed" in displayed(app)
 
 
 @pytest.mark.asyncio
