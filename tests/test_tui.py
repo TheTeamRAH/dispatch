@@ -142,9 +142,12 @@ async def test_workflow_menu_exposes_registration_controls(tmp_path) -> None:
         for control_id in ("run-workflow", "edit-workflow", "delete-workflow", "create-workflow"):
             assert list(app.query(f"#{control_id}"))
         await pilot.click("#create-workflow")
-        for control_id in ("workflow-name", "workflow-session", "workflow-startup-commands", "workflow-commands", "save-workflow", "cancel-workflow-form"):
+        for control_id in ("workflow-name", "workflow-session", "workflow-startup-label", "workflow-startup-commands", "workflow-commands-label", "workflow-commands", "save-workflow", "cancel-workflow-form"):
             assert list(app.query(f"#{control_id}"))
         assert isinstance(app.query_one("#workflow-session"), RadioSet)
+        await pilot.click("#workflow-startup-commands")
+        await pilot.press(*"source ~/.bash_aliases")
+        assert app.query_one("#workflow-startup-commands", TextArea).text == "source ~/.bash_aliases"
         await pilot.click("#persistent")
         assert app.query_one("#persistent", RadioButton).value is True
         assert app.query_one("#isolated", RadioButton).value is False

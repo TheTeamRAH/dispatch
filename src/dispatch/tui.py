@@ -348,8 +348,10 @@ class DispatchApp(App[None]):
         await self.query_one("#content", VerticalScroll).mount(
             Input(value=workflow.name if workflow else "", placeholder="Display name", id="workflow-name", classes="form-control"),
             session,
-            TextArea(startup, placeholder="Optional startup commands, one per line", id="workflow-startup-commands", classes="form-control"),
-            TextArea(commands, placeholder="Workflow commands, one per line", id="workflow-commands", classes="form-control"),
+            Label("Startup commands (optional, one command per line)", id="workflow-startup-label", classes="form-control"),
+            TextArea(startup, placeholder="Enter startup commands, one per line", id="workflow-startup-commands", classes="form-control"),
+            Label("Workflow commands (one command per line)", id="workflow-commands-label", classes="form-control"),
+            TextArea(commands, placeholder="Enter workflow commands, one per line", id="workflow-commands", classes="form-control"),
             Button("Save workflow", id="save-workflow", classes="form-control"),
             Button("Cancel", id="cancel-workflow-form", classes="form-control"),
         )
