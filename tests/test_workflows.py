@@ -134,6 +134,49 @@ async def test_workflow_service_persists_each_completed_run(tmp_path: Path) -> N
 
 
 
+
+
+@pytest.mark.asyncio
+async def test_workflow_history_is_written_while_command_is_running(tmp_path: Path) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class Session:
+        async def run(self, command, on_output=None):
+            started.set()
+            await release.wait()
+            return CompletedCommand(0, "done", "")
+
+        async def close(self):
+            pass
+
+    class Connection:
+        connection = object()
+
+    class Transport:
+        async def connect(self, target, password_provider):
+            return Connection()
+
+        async def open_bash_session(self, connected):
+            return Session()
+
+        async def close(self, connected):
+            pass
+
+    store = WorkflowHistoryStore(tmp_path / "history")
+    service = WorkflowService(Transport(), store)
+    task = asyncio.create_task(service.run(workflow(), [TargetSnapshot("one", "One", "one@host")], lambda: None))
+    await started.wait()
+
+    running = store.list_runs()
+    assert len(running) == 1
+    assert running[0]["status"] == "running"
+
+    release.set()
+    await task
+    assert store.list_runs()[0]["status"] == "completed"
+
+
 @pytest.mark.asyncio
 async def test_executor_reports_non_terminating_commands(tmp_path: Path) -> None:
     class Session:
@@ -148,6 +191,7 @@ async def test_executor_reports_non_terminating_commands(tmp_path: Path) -> None
 
     assert result.outcome == "failed"
     assert "timed out" in result.steps[0].explanation
+
 
 @pytest.mark.asyncio
 async def test_workflow_service_reports_connection_failures_to_ui(tmp_path: Path) -> None:
