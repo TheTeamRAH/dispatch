@@ -154,17 +154,29 @@ class WorkflowHistoryStore:
         self.output_limit = output_limit
 
     def append(self, run: dict[str, Any]) -> None:
+        self.begin(run)
+
+    def begin(self, run: dict[str, Any]) -> Path:
         self.path.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(self.path, 0o700)
         stamp = datetime.now(UTC).isoformat().replace("+00:00", "Z").replace(":", "-")
-        descriptor, temporary = tempfile.mkstemp(dir=self.path)
+        destination = self.path / f"{stamp}.json"
+        self._write(destination, run)
+        return destination
+
+    def finish(self, destination: Path, run: dict[str, Any]) -> None:
+        self._write(destination, run)
+
+    @staticmethod
+    def _write(destination: Path, run: dict[str, Any]) -> None:
+        descriptor, temporary = tempfile.mkstemp(dir=destination.parent)
         try:
             os.fchmod(descriptor, 0o600)
             with os.fdopen(descriptor, "w") as file:
                 json.dump(run, file)
                 file.flush()
                 os.fsync(file.fileno())
-            os.replace(temporary, self.path / f"{stamp}.json")
+            os.replace(temporary, destination)
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)

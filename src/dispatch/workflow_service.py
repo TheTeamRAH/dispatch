@@ -129,9 +129,12 @@ class WorkflowService:
                 await self.transport.close(connected)
 
         results: list[WorkflowTargetResult] = []
-        status = "completed"
+        status = "running"
+        run_record = {"status": status, "workflow": workflow.to_dict(), "target_results": []}
+        history_handle = self.history_store.begin(run_record) if hasattr(self.history_store, "begin") else None
         try:
             results = await run_batch(targets, run_target)
+            status = "completed"
         except asyncio.CancelledError:
             status = "cancelled"
             raise
@@ -139,5 +142,9 @@ class WorkflowService:
             status = "failed"
             raise
         finally:
-            self.history_store.append({"status": status, "workflow": workflow.to_dict(), "target_results": [result.to_dict() for result in results]})
+            run_record = {"status": status, "workflow": workflow.to_dict(), "target_results": [result.to_dict() for result in results]}
+            if history_handle is not None:
+                self.history_store.finish(history_handle, run_record)
+            else:
+                self.history_store.append(run_record)
         return results

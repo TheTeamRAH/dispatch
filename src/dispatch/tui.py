@@ -793,7 +793,7 @@ class DispatchApp(App[None]):
         return ""
 
     def _content(self) -> str:
-        if self._is_compact() and self.view in {"menu", "summary", "progress", "history_detail", "workflow_progress", "workflow_results"}:
+        if self.view in {"workflow_progress", "workflow_results", "workflow_history_detail"} or (self._is_compact() and self.view in {"menu", "summary", "progress", "history_detail"}):
             return self._main_content()
         return self._posting_context()
 
