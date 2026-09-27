@@ -17,7 +17,7 @@ from dispatch.models import (
     TargetSnapshot,
 )
 from dispatch.transport import FailureKind, TransportFailure
-from dispatch.tui import DispatchApp, PasswordPrompt, PreflightFailurePrompt, RemoveAllTargetsPrompt
+from dispatch.tui import DispatchApp, PasswordPrompt, PreflightFailurePrompt, RemoveAllTargetsPrompt, WorkflowRunPrompt
 from dispatch.workflow_stores import WorkflowRegistry
 from dispatch.workflow_models import ShellStep, WorkflowDefinition
 
@@ -189,13 +189,17 @@ async def test_run_workflow_requires_host_selection(tmp_path) -> None:
     workflow_registry.save(WorkflowDefinition("deploy", "Deploy", steps=(ShellStep("step", "Step", "true"),)))
     app = DispatchApp(registry=Registry(), workflow_registry=workflow_registry, workflow_service=object())
 
-    async with app.run_test(size=(120, 40)):
+    async with app.run_test(size=(120, 40)) as pilot:
         await app.action_workflows()
         app.query_one("#saved-workflows", SelectionList).select("deploy")
         await app.on_button_pressed(Button.Pressed(app.query_one("#run-workflow")))
         assert app.view == "workflow_targets"
         assert [choice.value for choice in app.query_one("#workflow-targets", SelectionList).options] == ["one", "two"]
         assert list(app.query("#confirm-run-workflow"))
+        app.query_one("#workflow-targets", SelectionList).select("one")
+        await app.on_button_pressed(Button.Pressed(app.query_one("#confirm-run-workflow")))
+        await pilot.pause()
+        assert isinstance(app.screen, WorkflowRunPrompt)
 
 
 @pytest.mark.asyncio

@@ -481,7 +481,13 @@ class DispatchApp(App[None]):
             selected = set(self.query_one("#workflow-targets", SelectionList).selected)
             targets = [target for target in self.saved_targets if target.id in selected]
             if targets:
-                self.run_worker(self._confirm_and_run_workflow(self.selected_workflow, targets), exclusive=True)
+                self.push_screen(
+                    WorkflowRunPrompt(self.selected_workflow, len(targets)),
+                    callback=lambda confirmed, workflow=self.selected_workflow, selected_targets=targets: (
+                        self.run_worker(self._run_workflow(workflow, selected_targets), exclusive=True)
+                        if confirmed else None
+                    ),
+                )
             return
         if event.button.id != "inspect-saved" or self.inspection_service is None:
             return
