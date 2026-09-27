@@ -47,7 +47,7 @@ Allow an operator to register, edit, remove, select, and deliberately execute re
 
 ### In scope
 
-- A local workflow registry at `$XDG_CONFIG_HOME/dispatch/workflows.toml`.
+- A local workflow registry directory at `$XDG_CONFIG_HOME/dispatch/workflows/`, containing one human-editable TOML file per workflow.
 - Workflow definitions with a stable ID, display name, `type = "shell"`, session mode, and ordered steps.
 - Ordered remote Bash command execution against one or more selected saved targets.
 - `isolated` sessions, where each step is run as an independent command through the authenticated SSH connection.
@@ -74,17 +74,17 @@ Allow an operator to register, edit, remove, select, and deliberately execute re
 
 ### Workflow definition and registry
 
-R1. Dispatch must persist workflows in `$XDG_CONFIG_HOME/dispatch/workflows.toml`, using the normal XDG default when the environment variable is absent.
+R1. Dispatch must persist each workflow as one TOML file under `$XDG_CONFIG_HOME/dispatch/workflows/`, using the normal XDG default when the environment variable is absent. The filename must be derived from the workflow ID using a validated, filesystem-safe representation; the workflow ID remains authoritative inside the document.
 
-R2. The registry must begin with `version = 1`. Each workflow must contain a non-empty unique `id`, non-empty `name`, `type = "shell"`, `session = "isolated"` or `session = "persistent"`, and at least one ordered command step. Each step must contain a non-empty stable `id`, non-empty `name`, and non-empty `command` string.
+R2. Each workflow file must begin with `version = 1` and contain one workflow with a non-empty unique `id`, non-empty `name`, `type = "shell"`, `session = "isolated"` or `session = "persistent"`, and at least one ordered command step. Each step must contain a non-empty stable `id`, non-empty `name`, and non-empty `command` string. IDs must be unique across the workflow directory.
 
 R3. A persistent workflow may contain ordered startup commands. Startup commands use the same command representation as steps and execute before the first step for each target.
 
-R4. Dispatch must preserve workflow order, step order, unknown top-level fields, unknown workflow fields, and unknown step fields when rewriting a valid registry. Invalid TOML, unsupported versions, duplicate or empty IDs, unsupported types/session modes, empty command values, and malformed entries must be rejected without altering the registry.
+R4. Dispatch must preserve step order, unknown top-level fields, unknown workflow fields, and unknown step fields when rewriting a valid workflow file. Loading must discover all supported TOML files in the workflow directory, ignore no malformed file silently, and report per-file validation warnings without executing any workflow. Invalid TOML, unsupported versions, duplicate or empty IDs, a filename/ID mismatch, unsupported types/session modes, empty command values, and malformed entries must be rejected without altering the affected file.
 
-R5. Workflow configuration must never contain passwords, passphrases, private-key material, SSH-agent credentials, or other credential fields. The registry must use the same private-directory policy as the target registry.
+R5. Workflow configuration must never contain passwords, passphrases, private-key material, SSH-agent credentials, or other credential fields. The workflow directory and its files must use the same private-directory and file-mode policy as the target registry.
 
-R6. Registering, editing, or removing a workflow must not execute commands. The registry and its parent directory must be created only after an explicit persistent configuration change.
+R6. Registering, editing, or removing a workflow must not execute commands. The workflow directory must be created only after an explicit persistent configuration change, and each save must replace only the affected workflow file.
 
 ### Execution and Bash sessions
 
@@ -130,41 +130,41 @@ R24. Workflow interaction must remain usable in the existing required `40x20`, `
 
 ## Proposed configuration
 
+Each workflow is stored as a separate file, for example `$XDG_CONFIG_HOME/dispatch/workflows/application-deploy.toml`:
+
 ```toml
 version = 1
-
-[[workflows]]
 id = "application-deploy"
 name = "Application deploy"
 type = "shell"
 session = "persistent"
 
-[[workflows.startup]]
+[[startup]]
 name = "Enable aliases"
 command = "shopt -s expand_aliases"
 
-[[workflows.startup]]
+[[startup]]
 name = "Load application aliases"
 command = "source ~/.bash_aliases"
 
-[[workflows.steps]]
+[[steps]]
 id = "prepare"
 name = "Prepare application"
 command = "prepare_app"
 
-[[workflows.steps]]
+[[steps]]
 id = "deploy"
 name = "Deploy application"
 command = "deploy_app"
 ```
 
-The configuration is declarative. It identifies commands to run but does not identify targets permanently; the operator selects saved targets at execution time. A future feature may support target selectors, but v1 should avoid silently binding a potentially mutating workflow to a target set.
+The configuration is declarative. It identifies commands to run but does not identify targets permanently; the operator selects saved targets at execution time. A future feature may support target selectors, but v1 should avoid silently binding a potentially mutating workflow to a target set. The workflow ID and filename must agree so that editing and removal affect exactly one file.
 
 ## Component contract
 
 | Component | Input | Responsibility |
 | --- | --- | --- |
-| Workflow registry | Explicit load, save, edit, remove | Validate and persist workflow definitions while preserving unknown fields and order. |
+| Workflow registry | Explicit load, save, edit, remove | Discover one TOML file per workflow, validate cross-file IDs, and persist only the affected workflow while preserving unknown fields and order. |
 | Command session | Authenticated SSH channel plus Bash settings | Run isolated commands or frame commands through one persistent Bash process, returning complete command results. |
 | Shell executor | Workflow definition, target, command session | Execute startup commands and ordered steps; apply failure, timeout, and cancellation semantics. |
 | Workflow coordinator | Operator action, workflow, selected targets | Create target sessions, bound concurrency, report progress, close resources, and persist a run. |
@@ -176,12 +176,12 @@ The configuration is declarative. It identifies commands to run but does not ide
 - Persistent sessions require reliable command framing and must not confuse command output with framing markers. Tests must cover marker-like output, multiline output, non-zero exits, shell termination, and cancellation.
 - Bash startup files are user-controlled and may be interactive, slow, or destructive. Explicit startup commands and visible confirmation reduce surprise but do not make arbitrary shell execution safe.
 - Persisted command output may contain secrets emitted by user commands. The implementation must not claim to redact arbitrary command output; output limits and a clear persistence policy must be documented in the UI and specification implementation notes.
-- Existing RPM inspection history and target configuration must remain readable. New workflow history and registry schemas must not change their version-1 meanings.
+- Existing RPM inspection history and target configuration must remain readable. New workflow history and one-file-per-workflow registry schemas must not change their version-1 meanings.
 - A persistent Bash process may behave differently from an interactive login shell. The feature must document that startup files are opt-in and that workflows should explicitly establish the required environment.
 
 ## Validation plan
 
-- Add registry tests for valid isolated and persistent workflows, startup commands, ordering, unknown-field preservation, malformed input, duplicate IDs, unsupported values, secret rejection, and atomic non-mutation on validation failure.
+- Add registry tests for valid isolated and persistent workflow files, directory discovery, cross-file ID uniqueness, filename/ID matching, startup commands, ordering, unknown-field preservation, malformed input, unsupported values, secret rejection, per-file atomic non-mutation on validation failure, and saving one workflow without rewriting unrelated files.
 - Add command-session tests for isolated execution and persistent Bash execution, including aliases, `cd`, `export`, functions, shell options, multiline stdout/stderr, marker-like output, non-zero status, shell exit, timeout, and close behaviour.
 - Add workflow executor tests for ordered steps, startup failures, step failures, skipped steps, per-target isolation, bounded output, cancellation, and cleanup on every terminal path.
 - Add workflow history tests for round-trip serialization, bounded output, malformed-record handling, secret exclusion, and separation from RPM inspection history.
@@ -190,7 +190,7 @@ The configuration is declarative. It identifies commands to run but does not ide
 
 ## Acceptance criteria
 
-- An operator can register a valid persistent Bash workflow through the TUI and see the equivalent workflow in `workflows.toml`.
+- An operator can register a valid persistent Bash workflow through the TUI and see the equivalent file under `workflows/` without changing unrelated workflow files.
 - Registration and editing never execute a command.
 - An operator can select saved SSH targets, review the workflow and persistent-session warning, and deliberately run it.
 - Startup commands and ordered steps execute in one Bash process per target, so an explicitly sourced alias can be used by a later step.
