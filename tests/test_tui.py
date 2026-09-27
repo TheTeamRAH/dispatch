@@ -138,7 +138,7 @@ async def test_workflow_menu_exposes_registration_controls(tmp_path) -> None:
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.press("w")
         assert app.view == "workflows"
-        for control_id in ("workflow-name", "workflow-session", "workflow-commands", "save-workflow"):
+        for control_id in ("workflow-name", "workflow-session", "workflow-startup-commands", "workflow-commands", "save-workflow"):
             assert list(app.query(f"#{control_id}"))
         assert isinstance(app.query_one("#workflow-session"), SelectionList)
         assert "Remote Bash workflows" in app._main_content()
@@ -154,13 +154,16 @@ async def test_registering_workflow_writes_ordered_commands_to_registry(tmp_path
         app.query_one("#workflow-name", Input).value = "Deploy application"
         session = app.query_one("#workflow-session", SelectionList)
         session.select("persistent")
+        app.query_one("#workflow-startup-commands", TextArea).text = "shopt -s expand_aliases\nsource ~/.bash_aliases"
         app.query_one("#workflow-commands", TextArea).text = "prepare_app\ndeploy_app"
-        await pilot.click("#save-workflow")
+        app._save_workflow()
         workflows = workflow_registry.load()
         assert len(workflows) == 1
         assert workflows[0].id
         assert workflows[0].session == "persistent"
         document = next((tmp_path / "workflows").glob("*.toml")).read_text()
+        assert 'command = "shopt -s expand_aliases"' in document
+        assert 'command = "source ~/.bash_aliases"' in document
         assert 'command = "prepare_app"' in document
         assert 'command = "deploy_app"' in document
 

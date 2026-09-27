@@ -329,7 +329,8 @@ class DispatchApp(App[None]):
         await self.query_one("#content", VerticalScroll).mount(
             Input(placeholder="Display name", id="workflow-name", classes="form-control"),
             SelectionList(("Isolated (each step starts a new process)", "isolated"), ("Persistent (share Bash state)", "persistent"), id="workflow-session", classes="form-control"),
-            TextArea(id="workflow-commands", classes="form-control"),
+            TextArea(placeholder="Optional startup commands, one per line", id="workflow-startup-commands", classes="form-control"),
+            TextArea(placeholder="Workflow commands, one per line", id="workflow-commands", classes="form-control"),
             Button("Register workflow (one command per line)", id="save-workflow", classes="form-control"),
         )
 
@@ -434,9 +435,11 @@ class DispatchApp(App[None]):
             name = self.query_one("#workflow-name", Input).value.strip()
             selected_session = list(self.query_one("#workflow-session", SelectionList).selected)
             session = selected_session[0] if selected_session else "isolated"
+            startup_commands = [line.strip() for line in self.query_one("#workflow-startup-commands", TextArea).text.splitlines() if line.strip()]
             commands = [line.strip() for line in self.query_one("#workflow-commands", TextArea).text.splitlines() if line.strip()]
+            startup = tuple(ShellStep(f"startup-{index}", f"Startup {index}", command) for index, command in enumerate(startup_commands, 1))
             steps = tuple(ShellStep(f"step-{index}", f"Step {index}", command) for index, command in enumerate(commands, 1))
-            self.workflow_registry.save(WorkflowDefinition(workflow_id, name, "shell", session, (), steps))
+            self.workflow_registry.save(WorkflowDefinition(workflow_id, name, "shell", session, startup, steps))
             self.saved_workflows = self.workflow_registry.load()
             self.management_message = f"Saved workflow {name}."
         except ValueError as error:
