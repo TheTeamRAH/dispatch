@@ -588,7 +588,7 @@ class DispatchApp(App[None]):
         self._refresh()
 
     def _workflow_progress(self, target, step, result) -> None:
-        self.workflow_current = f"{target.name}: {step.name} — {step.command}"
+        self.workflow_current = f"RUNNING — {target.name}: {step.name} — {step.command}"
         if result is not None:
             status = result.outcome
             kind = "startup" if step.id.startswith("startup-") else "command"
@@ -882,7 +882,7 @@ class DispatchApp(App[None]):
             return "Select hosts for workflow execution\n\nChoose one or more saved SSH targets before continuing."
         if self.view == "workflow_progress":
             current = self.workflow_current or "Waiting for the first command to start..."
-            output = "\n".join(self.workflow_output[-20:]) or "No output yet."
+            output = "\n".join(self.workflow_output[-20:]) or "No output received yet; the command may be silent or waiting for input."
             return f"Workflow execution in progress\n\nCurrent command:\n{current}\n\nRecent output:\n{output}"
         if self.view == "workflow_results":
             lines = ["Workflow results", ""]
