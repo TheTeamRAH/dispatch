@@ -567,7 +567,8 @@ class DispatchApp(App[None]):
         self.workflow_current = f"{target.name}: {step.name} — {step.command}"
         if result is not None:
             status = result.outcome
-            self.workflow_output.append(f"{target.name} / {step.name}: {status}")
+            kind = "startup" if step.id.startswith("startup-") else "command"
+            self.workflow_output.append(f"{target.name} / {kind} / {step.name}: {status}")
             if result.stdout:
                 self.workflow_output.extend(result.stdout.splitlines()[-8:])
             if result.stderr:
@@ -762,7 +763,7 @@ class DispatchApp(App[None]):
         return ""
 
     def _content(self) -> str:
-        if self._is_compact() and self.view in {"menu", "summary", "progress", "history_detail"}:
+        if self._is_compact() and self.view in {"menu", "summary", "progress", "history_detail", "workflow_progress", "workflow_results"}:
             return self._main_content()
         return self._posting_context()
 
