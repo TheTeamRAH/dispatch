@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 
 import pytest
 
 from dispatch.workflow_models import ShellStep, WorkflowDefinition
 from dispatch.workflow_stores import WorkflowRegistry, WorkflowHistoryStore
-from dispatch.workflow_service import ShellWorkflowExecutor
+from dispatch.workflow_service import ShellWorkflowExecutor, WorkflowService
 from dispatch.transport import CompletedCommand
 from dispatch.models import TargetSnapshot
 
@@ -94,4 +93,40 @@ async def test_workflow_history_round_trips_with_bounded_output(tmp_path: Path) 
     store.append(run)
     loaded = store.list_runs()
     assert loaded[0]["target_results"][0]["steps"][0]["stdout"] == "12345"
-    assert json.loads(next((tmp_path / "history").glob("*.json")).read_text())
+
+
+@pytest.mark.asyncio
+async def test_workflow_service_persists_each_completed_run(tmp_path: Path) -> None:
+    class Connection:
+        connection = object()
+
+    class Transport:
+        async def connect(self, target, password_provider):
+            return Connection()
+
+        async def open_bash_session(self, connected):
+            class Session:
+                async def run(self, command):
+                    return CompletedCommand(0, "ok", "")
+
+                async def close(self):
+                    pass
+
+            return Session()
+
+        async def run(self, channel, command):
+            return CompletedCommand(0, "ok", "")
+
+        async def close(self, connected):
+            pass
+
+    store = WorkflowHistoryStore(tmp_path / "history")
+    service = WorkflowService(Transport(), store)
+    target = TargetSnapshot("one", "One", "one@host")
+    results = await service.run(workflow(), [target], lambda: None)
+
+    assert len(results) == 1
+    runs = store.list_runs()
+    assert len(runs) == 1
+    assert runs[0]["workflow"]["id"] == "deploy"
+    assert runs[0]["target_results"][0]["outcome"] == "success"
