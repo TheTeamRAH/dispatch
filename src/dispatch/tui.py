@@ -132,9 +132,8 @@ class DispatchApp(App[None]):
     Screen.-narrow #dialog { width: 100%; }
     """
     BINDINGS = [
-        ("o", "one_off", "One-off"),
-        ("s", "saved", "Saved"),
-        ("m", "manage", "Manage"),
+        ("a", "action", "Action"),
+        ("i", "inventory", "Inventory"),
         ("h", "history", "History"),
         ("d", "toggle_details", "Details"),
         ("escape", "menu", "Menu"),
@@ -154,12 +153,19 @@ class DispatchApp(App[None]):
         self.registry = registry
         self.saved_targets = []
         self.management_message = ""
+        self.selected_action = None
+        self.inspection_total = 0
+        self.completed_targets = 0
+        self._spinner_frames = ("⠋", "⠙", "⠹", "⠸")
+        self._spinner_index = 0
+        self._spinner_timer = None
+        self.activity_override = None
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Container(id="workspace"):
             navigation_pane = Static(self._navigation(), id="navigation-pane")
-            navigation_pane.border_title = "Menu"
+            navigation_pane.border_title = "Activity"
             yield navigation_pane
             with Container(id="pane-area"):
                 with Container(id="left-panes"):
@@ -177,6 +183,18 @@ class DispatchApp(App[None]):
         self._apply_responsive_classes()
         self._refresh()
 
+    async def action_action(self) -> None:
+        await self._clear_controls()
+        self.view = "action"
+        self.selected_action = None
+        self._refresh()
+        actions = SelectionList(("RPM update discovery", "rpm-discovery"), id="action-select", classes="form-control")
+        self.query_one("#content", VerticalScroll).mount(
+            actions,
+            Button("Choose hosts", id="choose-action", classes="form-control"),
+        )
+        self.set_focus(actions)
+
     async def action_one_off(self) -> None:
         await self._clear_controls()
         self.view = "one_off"
@@ -186,8 +204,45 @@ class DispatchApp(App[None]):
         self.set_focus(destination)
 
     async def action_saved(self) -> None:
+        await self._show_saved_targets("saved")
+
+    async def action_inventory(self) -> None:
         await self._clear_controls()
-        self.view = "saved"
+        self.view = "inventory"
+        self.saved_targets = self.registry.load() if self.registry is not None else []
+        self._refresh()
+        pane = self.query_one("#content", VerticalScroll)
+        await pane.mount(
+            Button("List inventory", id="inventory-list", classes="form-control"),
+            Button("Edit inventory item", id="inventory-edit", classes="form-control"),
+            Button("Add inventory item", id="inventory-add", classes="form-control"),
+            Button("Delete inventory item", id="inventory-delete", classes="form-control"),
+        )
+
+    async def _choose_action_hosts(self) -> None:
+        selected = list(self.query_one("#action-select", SelectionList).selected)
+        if not selected:
+            self.management_message = "Select an action first."
+            self._refresh()
+            return
+        self.selected_action = selected[0]
+        await self._clear_controls()
+        self.view = "action_hosts"
+        self.saved_targets = self.registry.load() if self.registry is not None else []
+        self._refresh()
+        pane = self.query_one("#content", VerticalScroll)
+        if self.saved_targets:
+            choices = [(f"{target.name} ({target.ssh_destination})", target.id) for target in self.saved_targets]
+            await pane.mount(SelectionList(*choices, id="action-hosts", classes="form-control"))
+        await pane.mount(
+            Input(placeholder="Optional one-off host", id="action-one-off", classes="form-control"),
+            Button("Run action", id="run-action", classes="form-control"),
+        )
+        self.set_focus(pane.query_one("#action-hosts", SelectionList) if self.saved_targets else pane.query_one("#action-one-off", Input))
+
+    async def _show_saved_targets(self, view: str) -> None:
+        await self._clear_controls()
+        self.view = view
         self.saved_targets = self.registry.load() if self.registry is not None else []
         self._refresh()
         if not self.saved_targets:
@@ -195,18 +250,26 @@ class DispatchApp(App[None]):
         choices = [(f"{target.name} ({target.ssh_destination})", target.id) for target in self.saved_targets]
         targets = SelectionList(*choices, id="saved-targets", classes="form-control")
         inspect_selected = Button("Inspect selected", id="inspect-saved", classes="form-control")
-        self.query_one("#content", VerticalScroll).mount(targets, inspect_selected)
+        await self.query_one("#content", VerticalScroll).mount(targets, inspect_selected)
         self.set_focus(targets)
 
     async def action_manage(self) -> None:
+        await self._open_inventory_form("edit")
+
+    async def _open_inventory_form(self, operation: str) -> None:
         await self._clear_controls()
         self.view = "manage"
+        self.management_message = {
+            "add": "Add an inventory item.",
+            "edit": "Edit an inventory item.",
+            "delete": "Delete an inventory item by ID.",
+        }.get(operation, "Manage inventory items.")
         self.saved_targets = self.registry.load() if self.registry is not None else []
         self._refresh()
         target_id = Input(placeholder="Target ID", id="target-id", classes="form-control")
         name = Input(placeholder="Display name", id="target-name", classes="form-control")
         destination = Input(placeholder="user@host or SSH alias", id="target-destination", classes="form-control")
-        self.query_one("#content", VerticalScroll).mount(
+        await self.query_one("#content", VerticalScroll).mount(
             target_id, name, destination,
             Button("Save", id="save-target", classes="form-control"),
             Button("Edit", id="edit-target", classes="form-control"),
@@ -252,10 +315,40 @@ class DispatchApp(App[None]):
             return
         await self._start_inspection(targets)
 
+    async def _run_selected_action(self) -> None:
+        targets = []
+        if list(self.query("#action-hosts")):
+            selected = set(self.query_one("#action-hosts", SelectionList).selected)
+            targets = [target for target in self.saved_targets if target.id in selected]
+        one_off = self.query_one("#action-one-off", Input).value.strip() if list(self.query("#action-one-off")) else ""
+        if one_off:
+            from .models import TargetSnapshot
+
+            targets.append(TargetSnapshot(None, one_off, one_off))
+        if not targets:
+            self.management_message = "Select at least one host."
+            self._refresh()
+            return
+        await self._start_inspection(targets)
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "cancel-inspection":
             if self.inspection_worker is not None:
                 self.inspection_worker.cancel()
+            return
+        if event.button.id == "choose-action":
+            await self._choose_action_hosts()
+            return
+        if event.button.id == "inventory-list":
+            self.saved_targets = self.registry.load() if self.registry is not None else []
+            self.management_message = f"{len(self.saved_targets)} inventory item(s) loaded."
+            self._refresh()
+            return
+        if event.button.id in {"inventory-add", "inventory-edit", "inventory-delete"}:
+            await self._open_inventory_form(event.button.id.removeprefix("inventory-"))
+            return
+        if event.button.id == "run-action":
+            await self._run_selected_action()
             return
         if event.button.id and event.button.id.startswith("history-run-"):
             self.history_run = self.history_runs[int(event.button.id.removeprefix("history-run-"))]
@@ -316,8 +409,12 @@ class DispatchApp(App[None]):
     async def _start_inspection(self, targets) -> None:
         self.discovery_started = True
         self.results = []
+        self.activity_override = None
+        self.inspection_total = len(targets)
+        self.completed_targets = 0
         await self._clear_controls()
         self.view = "progress"
+        self._start_spinner()
         self._refresh()
         await self.query_one("#content", VerticalScroll).mount(
             Button("Cancel batch", id="cancel-inspection", classes="form-control")
@@ -337,14 +434,24 @@ class DispatchApp(App[None]):
             else:
                 run = await method(*arguments)
         except asyncio.CancelledError:
+            self._stop_spinner()
+            self.activity_override = "! Inspection cancelled"
             self.view = "summary"
             self._refresh()
             raise
+        except Exception:
+            self._stop_spinner()
+            self.activity_override = "× Inspection failed"
+            self.view = "summary"
+            self._refresh()
         else:
+            self._stop_spinner()
             self.results = list(run.results)
+            self.completed_targets = len(self.results)
             self.view = "summary"
             self._refresh()
         finally:
+            self._stop_spinner()
             await self._clear_controls()
             self.inspection_worker = None
 
@@ -356,8 +463,27 @@ class DispatchApp(App[None]):
 
     def _result_completed(self, result: TargetResult) -> None:
         self.results.append(result)
+        self.completed_targets = len(self.results)
         if self.view == "progress":
             self._refresh()
+
+    def _start_spinner(self) -> None:
+        self._spinner_index = 0
+        if self._spinner_timer is None:
+            self._spinner_timer = self.set_interval(0.2, self._advance_spinner)
+
+    def _stop_spinner(self) -> None:
+        if self._spinner_timer is not None:
+            self._spinner_timer.stop()
+            self._spinner_timer = None
+
+    def _advance_spinner(self) -> None:
+        if self.inspection_worker is None and self.view != "progress":
+            self._stop_spinner()
+            return
+        self._spinner_index = (self._spinner_index + 1) % len(self._spinner_frames)
+        if self.is_mounted:
+            self.query_one("#navigation-pane", Static).update(self._navigation())
 
     def _refresh(self) -> None:
         self.query_one("#view", Static).update(self._content())
@@ -376,13 +502,24 @@ class DispatchApp(App[None]):
         return self.size.width <= 60 or self.size.height <= 30
 
     def _navigation(self) -> str:
-        actions = (
-            ("o", "one_off", "One-off"),
-            ("s", "saved", "Saved"),
-            ("m", "manage", "Manage"),
-            ("h", "history", "History"),
-        )
-        return "  ".join(f"[#A684E8]{key}[/] {label}" for key, _, label in actions)
+        if self.activity_override is not None and self.view != "progress":
+            return self.activity_override
+        if self.view == "progress":
+            frame = self._spinner_frames[self._spinner_index]
+            return f"{frame} Inspecting targets (read-only) — {self.completed_targets}/{self.inspection_total} complete"
+        activity = {
+            "menu": "Ready",
+            "action": "Select an action",
+            "action_hosts": "Select hosts for the action",
+            "one_off": "Entering one-off target",
+            "saved": "Selecting saved targets",
+            "inventory": "Managing inventory",
+            "manage": "Managing inventory item",
+            "history": "Loading local history",
+            "history_detail": "Viewing inspection history",
+            "summary": "✓ Inspection complete",
+        }
+        return activity.get(self.view, self.view.replace("_", " ").title())
 
     def _detail_content(self) -> str:
         return self._main_content()
@@ -422,10 +559,13 @@ class DispatchApp(App[None]):
 
     def _posting_context(self) -> str:
         labels = {
-            "menu": "Choose a top-menu action.",
+            "menu": "Choose an action or workflow.",
+            "action": "Select an action below.",
+            "action_hosts": "Select hosts below.",
             "one_off": "Enter a target below.",
             "saved": "Select targets below.",
-            "manage": "Manage targets below.",
+            "inventory": "Choose an inventory operation below.",
+            "manage": "Manage inventory below.",
             "history": "Select a persisted run below.",
             "history_detail": "Detailed history is on the right.",
             "progress": "Inspection progress is on the right.",
@@ -435,7 +575,14 @@ class DispatchApp(App[None]):
 
     def _main_content(self) -> str:
         if self.view == "menu":
-            return "Dispatch\n\nInspect one-off target [o]\nInspect saved targets [s]\nManage saved targets [m]\nView history [h]\n\nRead-only RPM update discovery."
+            return "Dispatch\n\nAction (a)\nInventory (i)\nHistory (h)\n\nRead-only RPM update discovery."
+        if self.view == "action":
+            return "Choose an action\n\nSelect the operation before choosing its hosts.\n\nPress Esc to return to the menu."
+        if self.view == "action_hosts":
+            return "Choose hosts\n\nSelect saved hosts or enter a one-off destination.\n\nPress Esc to return to the menu."
+        if self.view == "inventory":
+            targets = "\n".join(f"{target.id}: {target.name} ({target.ssh_destination})" for target in self.saved_targets) or "No inventory items."
+            return f"Inventory\n\n{targets}\n\nChoose list, edit, add, or delete."
         if self.view == "one_off":
             return "Inspect one-off target\n\nEnter an OpenSSH alias or user@host destination.\n\nPress Esc to return to the menu."
         if self.view == "saved":
