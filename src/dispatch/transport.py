@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -53,7 +54,7 @@ class PersistentBashSession:
     def __init__(self, process: Any) -> None:
         self.process = process
 
-    async def run(self, command: str) -> CompletedCommand:
+    async def run(self, command: str, on_output=None) -> CompletedCommand:
         marker = f"{self.MARKER}:{id(self)}"
         self.process.stdin.write(f"{command}\nprintf '\\n{marker}:%s\\n' \"$?\"\n")
         if hasattr(self.process.stdin, "drain"):
@@ -71,6 +72,10 @@ class PersistentBashSession:
                     raise ConnectionError("invalid persistent Bash status marker") from error
                 return CompletedCommand(status, "".join(lines), "")
             lines.append(line)
+            if on_output is not None:
+                callback = on_output(text)
+                if inspect.isawaitable(callback):
+                    await callback
 
     async def close(self) -> None:
         self.process.stdin.write("exit\n")

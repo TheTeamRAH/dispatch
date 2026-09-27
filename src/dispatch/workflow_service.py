@@ -13,7 +13,6 @@ from .transport import CompletedCommand
 from .workflow_models import ShellStep, StepResult, WorkflowDefinition, WorkflowTargetResult
 
 OUTPUT_LIMIT = 100_000
-COMMAND_TIMEOUT_SECONDS = 60
 
 
 def _timestamp() -> str:
@@ -21,7 +20,7 @@ def _timestamp() -> str:
 
 
 class CommandSession(Protocol):
-    async def run(self, command: str) -> CompletedCommand: ...
+    async def run(self, command: str, on_output=None) -> CompletedCommand: ...
 
     async def close(self) -> None: ...
 
@@ -29,11 +28,11 @@ class CommandSession(Protocol):
 class ShellWorkflowExecutor:
     """Run ordered startup and shell commands for one target."""
 
-    def __init__(self, output_limit: int = OUTPUT_LIMIT, command_timeout: float = COMMAND_TIMEOUT_SECONDS) -> None:
+    def __init__(self, output_limit: int = OUTPUT_LIMIT, command_timeout: float | None = None) -> None:
         self.output_limit = output_limit
         self.command_timeout = command_timeout
 
-    async def execute(self, workflow: WorkflowDefinition, target: TargetSnapshot, session: CommandSession, on_step=None) -> WorkflowTargetResult:
+    async def execute(self, workflow: WorkflowDefinition, target: TargetSnapshot, session: CommandSession, on_step=None, on_output=None) -> WorkflowTargetResult:
         results: list[StepResult] = []
         failed = False
         for step in (*workflow.startup, *workflow.steps):
@@ -49,7 +48,7 @@ class ShellWorkflowExecutor:
                 callback = on_step(target, step, None)
                 if inspect.isawaitable(callback):
                     await callback
-            result = await self._run_step(step, session)
+            result = await self._run_step(step, session, on_output, target)
             results.append(result)
             if on_step is not None:
                 callback = on_step(target, step, result)
@@ -59,10 +58,15 @@ class ShellWorkflowExecutor:
         outcome = "success" if not failed else "failed"
         return WorkflowTargetResult(workflow.id, workflow.name, workflow.session, asdict(target), outcome, tuple(results))
 
-    async def _run_step(self, step: ShellStep, session: CommandSession) -> StepResult:
+    async def _run_step(self, step: ShellStep, session: CommandSession, on_output=None, target=None) -> StepResult:
         started = _timestamp()
         try:
-            completed = await asyncio.wait_for(session.run(step.command), timeout=self.command_timeout)
+            callback = (lambda line: on_output(target, step, line)) if on_output is not None and target is not None else None
+            if "on_output" in inspect.signature(session.run).parameters:
+                pending = session.run(step.command, callback)
+            else:
+                pending = session.run(step.command)
+            completed = await asyncio.wait_for(pending, timeout=self.command_timeout) if self.command_timeout is not None else await pending
         except asyncio.TimeoutError:
             return StepResult(step.id, step.name, "failed", started, _timestamp(), None, "", "", f"Command timed out after {self.command_timeout:g} seconds. The command may require interactive input or may not terminate.")
         except Exception as error:
@@ -85,7 +89,7 @@ class _IsolatedSession:
         self.transport = transport
         self.channel = channel
 
-    async def run(self, command: str) -> CompletedCommand:
+    async def run(self, command: str, on_output=None) -> CompletedCommand:
         return await self.transport.run(self.channel, command)
 
     async def close(self) -> None:
@@ -100,7 +104,7 @@ class WorkflowService:
         self.history_store = history_store
         self.executor = executor or ShellWorkflowExecutor()
 
-    async def run(self, workflow: WorkflowDefinition, targets, password_provider, on_result=None, on_progress=None) -> list[WorkflowTargetResult]:
+    async def run(self, workflow: WorkflowDefinition, targets, password_provider, on_result=None, on_progress=None, on_output=None) -> list[WorkflowTargetResult]:
         from .workflow import run_batch
 
         async def run_target(target: TargetSnapshot) -> WorkflowTargetResult:
@@ -114,7 +118,7 @@ class WorkflowService:
                 return result
             session = await self.transport.open_bash_session(connected) if workflow.session == "persistent" else _IsolatedSession(self.transport, connected)
             try:
-                result = await self.executor.execute(workflow, target, session, on_progress)
+                result = await self.executor.execute(workflow, target, session, on_progress, on_output)
                 if on_result is not None:
                     callback = on_result(result)
                     if inspect.isawaitable(callback):

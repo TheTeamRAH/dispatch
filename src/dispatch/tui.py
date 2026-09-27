@@ -576,6 +576,7 @@ class DispatchApp(App[None]):
                 self._password_not_available,
                 self._workflow_result,
                 self._workflow_progress,
+                self._workflow_output,
             )
         finally:
             self._stop_spinner()
@@ -598,6 +599,12 @@ class DispatchApp(App[None]):
                 self.workflow_output.extend(result.stderr.splitlines()[-8:])
         if self.view == "workflow_progress":
             self._refresh()
+
+    def _workflow_output(self, target, step, line) -> None:
+        self.workflow_output.append(f"{target.name} / {step.name}: {line.rstrip()}")
+        if self.view == "workflow_progress":
+            self._refresh()
+
 
     async def _remove_all_targets(self) -> None:
         if self.registry is None:
