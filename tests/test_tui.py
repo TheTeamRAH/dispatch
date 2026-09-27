@@ -395,7 +395,7 @@ async def test_history_view_includes_workflow_runs() -> None:
     app = DispatchApp(workflow_history_store=WorkflowHistory())
     async with app.run_test(size=(80, 24)) as pilot:
         await pilot.press("h")
-        assert "Workflow — Deploy: host-1: failed" in displayed(app)
+        assert "Workflow — Deploy (completed): host-1: failed" in displayed(app)
 
 
 @pytest.mark.asyncio

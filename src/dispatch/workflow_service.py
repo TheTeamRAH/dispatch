@@ -124,6 +124,16 @@ class WorkflowService:
                 await session.close()
                 await self.transport.close(connected)
 
-        results = await run_batch(targets, run_target)
-        self.history_store.append({"workflow": workflow.to_dict(), "target_results": [result.to_dict() for result in results]})
+        results: list[WorkflowTargetResult] = []
+        status = "completed"
+        try:
+            results = await run_batch(targets, run_target)
+        except asyncio.CancelledError:
+            status = "cancelled"
+            raise
+        except Exception:
+            status = "failed"
+            raise
+        finally:
+            self.history_store.append({"status": status, "workflow": workflow.to_dict(), "target_results": [result.to_dict() for result in results]})
         return results

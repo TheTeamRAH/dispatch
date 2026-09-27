@@ -841,7 +841,8 @@ class DispatchApp(App[None]):
                 workflow = run.get("workflow", {})
                 targets = run.get("target_results", [])
                 outcomes = ", ".join(f"{item.get('target', {}).get('name', 'unknown')}: {item.get('outcome', 'unknown')}" for item in targets)
-                lines.append(f"Workflow — {workflow.get('name', 'unknown')}: {outcomes or 'no target results'}")
+                state = run.get("status", "completed")
+                lines.append(f"Workflow — {workflow.get('name', 'unknown')} ({state}): {outcomes or 'no target results'}")
             lines.append("\nPress Esc to return to the menu.")
             return "\n".join(lines)
         if self.view == "history_detail":
