@@ -13,7 +13,7 @@ from textual.containers import Container, VerticalScroll
 from textual.events import Resize
 from textual.markup import escape
 from textual.screen import ModalScreen
-from textual.widgets import Button, Header, Input, Label, SelectionList, Static, TextArea
+from textual.widgets import Button, Header, Input, Label, RadioButton, RadioSet, SelectionList, Static, TextArea
 
 from .models import CurrentRebootState, RebootForecast, TargetResult
 from .workflow_models import ShellStep, WorkflowDefinition
@@ -340,9 +340,11 @@ class DispatchApp(App[None]):
         self._refresh()
         startup = "\n".join(step.command for step in workflow.startup) if workflow else ""
         commands = "\n".join(step.command for step in workflow.steps) if workflow else ""
-        session = SelectionList(("Isolated (each step starts a new process)", "isolated"), ("Persistent (share Bash state)", "persistent"), id="workflow-session", classes="form-control")
-        if workflow is not None:
-            session.select(workflow.session)
+        session = RadioSet(
+            RadioButton("Isolated (each step starts a new process)", value=workflow is None or workflow.session == "isolated", id="isolated"),
+            RadioButton("Persistent (share Bash state)", value=workflow is not None and workflow.session == "persistent", id="persistent"),
+            id="workflow-session", classes="form-control",
+        )
         await self.query_one("#content", VerticalScroll).mount(
             Input(value=workflow.name if workflow else "", placeholder="Display name", id="workflow-name", classes="form-control"),
             session,
@@ -351,6 +353,7 @@ class DispatchApp(App[None]):
             Button("Save workflow", id="save-workflow", classes="form-control"),
             Button("Cancel", id="cancel-workflow-form", classes="form-control"),
         )
+        self.set_focus(self.query_one("#workflow-startup-commands", TextArea))
 
 
     async def action_menu(self) -> None:
@@ -481,8 +484,7 @@ class DispatchApp(App[None]):
         try:
             workflow_id = self.editing_workflow_id or str(uuid4())
             name = self.query_one("#workflow-name", Input).value.strip()
-            selected_session = list(self.query_one("#workflow-session", SelectionList).selected)
-            session = selected_session[0] if selected_session else "isolated"
+            session = "persistent" if self.query_one("#persistent", RadioButton).value else "isolated"
             startup_commands = [line.strip() for line in self.query_one("#workflow-startup-commands", TextArea).text.splitlines() if line.strip()]
             commands = [line.strip() for line in self.query_one("#workflow-commands", TextArea).text.splitlines() if line.strip()]
             startup = tuple(ShellStep(f"startup-{index}", f"Startup {index}", command) for index, command in enumerate(startup_commands, 1))

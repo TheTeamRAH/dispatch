@@ -5,7 +5,7 @@ from dataclasses import replace
 import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Static
-from textual.widgets import Button, Footer, Input, SelectionList, TextArea
+from textual.widgets import Button, Footer, Input, RadioButton, RadioSet, SelectionList, TextArea
 
 from dispatch.models import (
     CurrentRebootState,
@@ -144,7 +144,10 @@ async def test_workflow_menu_exposes_registration_controls(tmp_path) -> None:
         await pilot.click("#create-workflow")
         for control_id in ("workflow-name", "workflow-session", "workflow-startup-commands", "workflow-commands", "save-workflow", "cancel-workflow-form"):
             assert list(app.query(f"#{control_id}"))
-        assert isinstance(app.query_one("#workflow-session"), SelectionList)
+        assert isinstance(app.query_one("#workflow-session"), RadioSet)
+        await pilot.click("#persistent")
+        assert app.query_one("#persistent", RadioButton).value is True
+        assert app.query_one("#isolated", RadioButton).value is False
         assert "Create remote Bash workflow" in app._main_content()
 
 
@@ -157,8 +160,9 @@ async def test_registering_workflow_writes_ordered_commands_to_registry(tmp_path
         await app.action_workflows()
         await app._open_workflow_form()
         app.query_one("#workflow-name", Input).value = "Deploy application"
-        session = app.query_one("#workflow-session", SelectionList)
-        session.select("persistent")
+        session = app.query_one("#workflow-session", RadioSet)
+        app.query_one("#persistent", RadioButton).value = True
+        app.query_one("#isolated", RadioButton).value = False
         app.query_one("#workflow-startup-commands", TextArea).text = "shopt -s expand_aliases\nsource ~/.bash_aliases"
         app.query_one("#workflow-commands", TextArea).text = "prepare_app\ndeploy_app"
         await app._save_workflow()
