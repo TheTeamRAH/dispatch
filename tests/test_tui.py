@@ -187,7 +187,11 @@ async def test_registering_workflow_writes_ordered_commands_to_registry(tmp_path
 async def test_run_workflow_requires_host_selection(tmp_path) -> None:
     workflow_registry = WorkflowRegistry(tmp_path / "workflows")
     workflow_registry.save(WorkflowDefinition("deploy", "Deploy", steps=(ShellStep("step", "Step", "true"),)))
-    app = DispatchApp(registry=Registry(), workflow_registry=workflow_registry, workflow_service=object())
+    class Service:
+        async def run(self, workflow, targets, password_provider, on_result):
+            return []
+
+    app = DispatchApp(registry=Registry(), workflow_registry=workflow_registry, workflow_service=Service())
 
     async with app.run_test(size=(120, 40)) as pilot:
         await app.action_workflows()
@@ -200,6 +204,10 @@ async def test_run_workflow_requires_host_selection(tmp_path) -> None:
         await app.on_button_pressed(Button.Pressed(app.query_one("#confirm-run-workflow")))
         await pilot.pause()
         assert isinstance(app.screen, WorkflowRunPrompt)
+        await app.screen.dismiss(True)
+        await app._run_workflow(app.saved_workflows[0], [app.saved_targets[0]])
+        assert app.view == "workflow_results"
+        assert not list(app.query("#workflow-targets"))
 
 
 @pytest.mark.asyncio

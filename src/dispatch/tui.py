@@ -536,6 +536,7 @@ class DispatchApp(App[None]):
             await self._run_workflow(workflow, targets)
 
     async def _run_workflow(self, workflow: WorkflowDefinition, targets) -> None:
+        await self._clear_controls()
         self.view = "workflow_progress"
         self.workflow_results = []
         self._refresh()
