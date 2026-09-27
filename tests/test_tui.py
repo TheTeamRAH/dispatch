@@ -138,10 +138,13 @@ async def test_workflow_menu_exposes_registration_controls(tmp_path) -> None:
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.press("w")
         assert app.view == "workflows"
-        for control_id in ("workflow-name", "workflow-session", "workflow-startup-commands", "workflow-commands", "save-workflow"):
+        for control_id in ("run-workflow", "edit-workflow", "delete-workflow", "create-workflow"):
+            assert list(app.query(f"#{control_id}"))
+        await pilot.click("#create-workflow")
+        for control_id in ("workflow-name", "workflow-session", "workflow-startup-commands", "workflow-commands", "save-workflow", "cancel-workflow-form"):
             assert list(app.query(f"#{control_id}"))
         assert isinstance(app.query_one("#workflow-session"), SelectionList)
-        assert "Remote Bash workflows" in app._main_content()
+        assert "Create remote Bash workflow" in app._main_content()
 
 
 @pytest.mark.asyncio
@@ -151,12 +154,13 @@ async def test_registering_workflow_writes_ordered_commands_to_registry(tmp_path
 
     async with app.run_test(size=(120, 40)) as pilot:
         await app.action_workflows()
+        await app._open_workflow_form()
         app.query_one("#workflow-name", Input).value = "Deploy application"
         session = app.query_one("#workflow-session", SelectionList)
         session.select("persistent")
         app.query_one("#workflow-startup-commands", TextArea).text = "shopt -s expand_aliases\nsource ~/.bash_aliases"
         app.query_one("#workflow-commands", TextArea).text = "prepare_app\ndeploy_app"
-        app._save_workflow()
+        await app._save_workflow()
         workflows = workflow_registry.load()
         assert len(workflows) == 1
         assert workflows[0].id
@@ -166,6 +170,33 @@ async def test_registering_workflow_writes_ordered_commands_to_registry(tmp_path
         assert 'command = "source ~/.bash_aliases"' in document
         assert 'command = "prepare_app"' in document
         assert 'command = "deploy_app"' in document
+
+
+@pytest.mark.asyncio
+async def test_workflow_edit_and_delete_actions_are_separate_from_create(tmp_path) -> None:
+    workflow_registry = WorkflowRegistry(tmp_path / "workflows")
+    app = DispatchApp(registry=Registry(), workflow_registry=workflow_registry)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await app.action_workflows()
+        await app._open_workflow_form()
+        app.query_one("#workflow-name", Input).value = "Original"
+        app.query_one("#workflow-commands", TextArea).text = "true"
+        await app._save_workflow()
+        workflow = workflow_registry.load()[0]
+        await pilot.pause()
+        app.query_one("#saved-workflows", SelectionList).select(workflow.id)
+        await pilot.pause()
+        await pilot.click("#edit-workflow")
+        assert app.view == "workflow_form"
+        assert app.query_one("#workflow-name", Input).value == "Original"
+        app.query_one("#workflow-name", Input).value = "Edited"
+        await app._save_workflow()
+        assert workflow_registry.load()[0].name == "Edited"
+        app.query_one("#saved-workflows", SelectionList).select(workflow.id)
+        await pilot.pause()
+        await app.on_button_pressed(Button.Pressed(app.query_one("#delete-workflow")))
+        assert workflow_registry.load() == []
 
 
 @pytest.mark.asyncio

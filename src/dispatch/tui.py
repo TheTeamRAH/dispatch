@@ -178,6 +178,7 @@ class DispatchApp(App[None]):
         self.saved_targets = []
         self.saved_workflows = []
         self.workflow_results = []
+        self.editing_workflow_id = None
         self.management_message = ""
         self.selected_action = None
         self.inspection_total = 0
@@ -317,22 +318,40 @@ class DispatchApp(App[None]):
     async def action_workflows(self) -> None:
         await self._clear_controls()
         self.view = "workflows"
+        self.editing_workflow_id = None
         self.saved_workflows = self.workflow_registry.load() if self.workflow_registry is not None else []
         self.saved_targets = self.registry.load() if self.registry is not None else []
         self._refresh()
+        pane = self.query_one("#content", VerticalScroll)
         if self.saved_workflows:
             choices = [(f"{item.name} ({item.session})", item.id) for item in self.saved_workflows]
-            await self.query_one("#content", VerticalScroll).mount(
-                SelectionList(*choices, id="saved-workflows", classes="form-control"),
-                Button("Run selected workflow", id="run-workflow", classes="form-control"),
-            )
-        await self.query_one("#content", VerticalScroll).mount(
-            Input(placeholder="Display name", id="workflow-name", classes="form-control"),
-            SelectionList(("Isolated (each step starts a new process)", "isolated"), ("Persistent (share Bash state)", "persistent"), id="workflow-session", classes="form-control"),
-            TextArea(placeholder="Optional startup commands, one per line", id="workflow-startup-commands", classes="form-control"),
-            TextArea(placeholder="Workflow commands, one per line", id="workflow-commands", classes="form-control"),
-            Button("Register workflow (one command per line)", id="save-workflow", classes="form-control"),
+            await pane.mount(SelectionList(*choices, id="saved-workflows", classes="form-control"))
+        await pane.mount(
+            Button("Run selected workflow", id="run-workflow", classes="form-control"),
+            Button("Edit selected workflow", id="edit-workflow", classes="form-control"),
+            Button("Delete selected workflow", id="delete-workflow", classes="form-control"),
+            Button("Create new workflow", id="create-workflow", classes="form-control"),
         )
+
+    async def _open_workflow_form(self, workflow: WorkflowDefinition | None = None) -> None:
+        await self._clear_controls()
+        self.view = "workflow_form"
+        self.editing_workflow_id = workflow.id if workflow is not None else None
+        self._refresh()
+        startup = "\n".join(step.command for step in workflow.startup) if workflow else ""
+        commands = "\n".join(step.command for step in workflow.steps) if workflow else ""
+        session = SelectionList(("Isolated (each step starts a new process)", "isolated"), ("Persistent (share Bash state)", "persistent"), id="workflow-session", classes="form-control")
+        if workflow is not None:
+            session.select(workflow.session)
+        await self.query_one("#content", VerticalScroll).mount(
+            Input(value=workflow.name if workflow else "", placeholder="Display name", id="workflow-name", classes="form-control"),
+            session,
+            TextArea(startup, placeholder="Optional startup commands, one per line", id="workflow-startup-commands", classes="form-control"),
+            TextArea(commands, placeholder="Workflow commands, one per line", id="workflow-commands", classes="form-control"),
+            Button("Save workflow", id="save-workflow", classes="form-control"),
+            Button("Cancel", id="cancel-workflow-form", classes="form-control"),
+        )
+
 
     async def action_menu(self) -> None:
         await self._clear_controls()
@@ -409,8 +428,31 @@ class DispatchApp(App[None]):
         if event.button.id in {"save-target", "edit-target", "remove-target"}:
             self._manage_target(event.button.id)
             return
+        if event.button.id == "create-workflow":
+            await self._open_workflow_form()
+            return
+        if event.button.id == "cancel-workflow-form":
+            await self.action_workflows()
+            return
+        if event.button.id in {"edit-workflow", "delete-workflow"}:
+            if not list(self.query("#saved-workflows")):
+                self.management_message = "No registered workflows."
+                self._refresh()
+                return
+            selected = set(self.query_one("#saved-workflows", SelectionList).selected)
+            workflows = [item for item in self.saved_workflows if item.id in selected]
+            if len(workflows) != 1:
+                self.management_message = "Select exactly one workflow."
+                self._refresh()
+                return
+            if event.button.id == "edit-workflow":
+                await self._open_workflow_form(workflows[0])
+            else:
+                self.workflow_registry.remove(workflows[0].id)
+                await self.action_workflows()
+            return
         if event.button.id == "save-workflow":
-            self._save_workflow()
+            await self._save_workflow()
             return
         if event.button.id == "run-workflow" and self.workflow_service is not None:
             selected = set(self.query_one("#saved-workflows", SelectionList).selected)
@@ -425,13 +467,13 @@ class DispatchApp(App[None]):
         if targets:
             await self._start_inspection(targets)
 
-    def _save_workflow(self) -> None:
+    async def _save_workflow(self) -> None:
         if self.workflow_registry is None:
             self.management_message = "Workflow registry is unavailable."
             self._refresh()
             return
         try:
-            workflow_id = str(uuid4())
+            workflow_id = self.editing_workflow_id or str(uuid4())
             name = self.query_one("#workflow-name", Input).value.strip()
             selected_session = list(self.query_one("#workflow-session", SelectionList).selected)
             session = selected_session[0] if selected_session else "isolated"
@@ -442,6 +484,7 @@ class DispatchApp(App[None]):
             self.workflow_registry.save(WorkflowDefinition(workflow_id, name, "shell", session, startup, steps))
             self.saved_workflows = self.workflow_registry.load()
             self.management_message = f"Saved workflow {name}."
+            await self.action_workflows()
         except ValueError as error:
             self.management_message = str(error)
         self._refresh()
@@ -655,7 +698,8 @@ class DispatchApp(App[None]):
             "inventory": "Choose an inventory operation below.",
             "manage": "Manage inventory below.",
             "history": "Select a persisted run below.",
-            "workflows": "Register or run a remote Bash workflow.",
+            "workflows": "Choose create, edit, delete, or run.",
+            "workflow_form": "Define the workflow and its ordered commands.",
             "workflow_progress": "Workflow execution is in progress.",
             "workflow_results": "Workflow execution results.",
             "history_detail": "Detailed history is on the right.",
@@ -695,7 +739,10 @@ class DispatchApp(App[None]):
             return self._summary(self.history_run.results, "Inspection history")
         if self.view == "workflows":
             workflows = "\n".join(f"{item.id}: {item.name} ({item.session})" for item in self.saved_workflows) or "No registered workflows."
-            return f"Remote Bash workflows\n\n{workflows}\n\nEnter one command per line to register a workflow. Persistent sessions preserve Bash state."
+            return f"Remote Bash workflows\n\n{workflows}\n\nChoose Create, Edit, Delete, or Run."
+        if self.view == "workflow_form":
+            mode = "Edit" if self.editing_workflow_id else "Create"
+            return f"{mode} remote Bash workflow\n\nStartup commands and workflow commands are entered one per line."
         if self.view == "workflow_progress":
             return "Workflow execution in progress\n\nCommands are running on the selected saved targets."
         if self.view == "workflow_results":

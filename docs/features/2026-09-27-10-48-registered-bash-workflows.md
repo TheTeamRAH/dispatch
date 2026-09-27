@@ -214,3 +214,4 @@ None block this proposed v1 scope. The implementation must choose and document c
 
 - Workflow registration now generates the workflow ID automatically in the TUI; the operator supplies a display name and commands only.
 - The workflow session is presented as a selectable `isolated` or `persistent` option rather than a free-text input.
+- The workflow screen separates Create, Edit, Delete, and Run actions; the create/edit form is not shown alongside the workflow action menu.
