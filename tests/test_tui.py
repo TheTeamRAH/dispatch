@@ -184,6 +184,21 @@ async def test_registering_workflow_writes_ordered_commands_to_registry(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_run_workflow_requires_host_selection(tmp_path) -> None:
+    workflow_registry = WorkflowRegistry(tmp_path / "workflows")
+    workflow_registry.save(WorkflowDefinition("deploy", "Deploy", steps=(ShellStep("step", "Step", "true"),)))
+    app = DispatchApp(registry=Registry(), workflow_registry=workflow_registry, workflow_service=object())
+
+    async with app.run_test(size=(120, 40)):
+        await app.action_workflows()
+        app.query_one("#saved-workflows", SelectionList).select("deploy")
+        await app.on_button_pressed(Button.Pressed(app.query_one("#run-workflow")))
+        assert app.view == "workflow_targets"
+        assert [choice.value for choice in app.query_one("#workflow-targets", SelectionList).options] == ["one", "two"]
+        assert list(app.query("#confirm-run-workflow"))
+
+
+@pytest.mark.asyncio
 async def test_workflow_edit_and_delete_actions_are_separate_from_create(tmp_path) -> None:
     workflow_registry = WorkflowRegistry(tmp_path / "workflows")
     app = DispatchApp(registry=Registry(), workflow_registry=workflow_registry)

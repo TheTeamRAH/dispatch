@@ -181,6 +181,7 @@ class DispatchApp(App[None]):
         self.saved_workflows = []
         self.workflow_results = []
         self.editing_workflow_id = None
+        self.selected_workflow = None
         self.management_message = ""
         self.selected_action = None
         self.inspection_total = 0
@@ -470,8 +471,17 @@ class DispatchApp(App[None]):
         if event.button.id == "run-workflow" and self.workflow_service is not None:
             selected = set(self.query_one("#saved-workflows", SelectionList).selected)
             workflows = [item for item in self.saved_workflows if item.id in selected]
-            if len(workflows) == 1 and self.saved_targets:
-                self.run_worker(self._confirm_and_run_workflow(workflows[0]), exclusive=True)
+            if len(workflows) == 1:
+                await self._open_workflow_targets(workflows[0])
+            return
+        if event.button.id == "cancel-workflow-targets":
+            await self.action_workflows()
+            return
+        if event.button.id == "confirm-run-workflow" and self.selected_workflow is not None:
+            selected = set(self.query_one("#workflow-targets", SelectionList).selected)
+            targets = [target for target in self.saved_targets if target.id in selected]
+            if targets:
+                self.run_worker(self._confirm_and_run_workflow(self.selected_workflow, targets), exclusive=True)
             return
         if event.button.id != "inspect-saved" or self.inspection_service is None:
             return
@@ -501,15 +511,29 @@ class DispatchApp(App[None]):
             self.management_message = str(error)
         self._refresh()
 
-    async def _confirm_and_run_workflow(self, workflow: WorkflowDefinition) -> None:
-        if await self.push_screen_wait(WorkflowRunPrompt(workflow, len(self.saved_targets))):
-            await self._run_workflow(workflow)
+    async def _open_workflow_targets(self, workflow: WorkflowDefinition) -> None:
+        await self._clear_controls()
+        self.selected_workflow = workflow
+        self.view = "workflow_targets"
+        self._refresh()
+        pane = self.query_one("#content", VerticalScroll)
+        if self.saved_targets:
+            choices = [(f"{target.name} ({target.ssh_destination})", target.id) for target in self.saved_targets]
+            await pane.mount(SelectionList(*choices, id="workflow-targets", classes="form-control"))
+        await pane.mount(
+            Button("Run workflow on selected hosts", id="confirm-run-workflow", classes="form-control"),
+            Button("Cancel", id="cancel-workflow-targets", classes="form-control"),
+        )
 
-    async def _run_workflow(self, workflow: WorkflowDefinition) -> None:
+    async def _confirm_and_run_workflow(self, workflow: WorkflowDefinition, targets) -> None:
+        if await self.push_screen_wait(WorkflowRunPrompt(workflow, len(targets))):
+            await self._run_workflow(workflow, targets)
+
+    async def _run_workflow(self, workflow: WorkflowDefinition, targets) -> None:
         self.view = "workflow_progress"
         self.workflow_results = []
         self._refresh()
-        await self.workflow_service.run(workflow, self.saved_targets, self._password_not_available, self._workflow_result)
+        await self.workflow_service.run(workflow, targets, self._password_not_available, self._workflow_result)
         self.view = "workflow_results"
         self._refresh()
 
@@ -716,6 +740,7 @@ class DispatchApp(App[None]):
             "history": "Select a persisted run below.",
             "workflows": "Choose create, edit, delete, or run.",
             "workflow_form": "Define the workflow and its ordered commands.",
+            "workflow_targets": "Select the hosts for this workflow.",
             "workflow_progress": "Workflow execution is in progress.",
             "workflow_results": "Workflow execution results.",
             "history_detail": "Detailed history is on the right.",
@@ -759,6 +784,8 @@ class DispatchApp(App[None]):
         if self.view == "workflow_form":
             mode = "Edit" if self.editing_workflow_id else "Create"
             return f"{mode} remote Bash workflow\n\nStartup commands and workflow commands are entered one per line."
+        if self.view == "workflow_targets":
+            return "Select hosts for workflow execution\n\nChoose one or more saved SSH targets before continuing."
         if self.view == "workflow_progress":
             return "Workflow execution in progress\n\nCommands are running on the selected saved targets."
         if self.view == "workflow_results":
