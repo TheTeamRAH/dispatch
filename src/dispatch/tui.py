@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 from collections.abc import Sequence
 import inspect
 from typing import Protocol
@@ -175,6 +176,7 @@ class DispatchApp(App[None]):
         self.workflow_history_runs: list[dict] = []
         self.history_run = None
         self.workflow_history_run = None
+        self.workflow_active_record = None
         self.inspection_worker = None
         self.inspection_service = inspection_service
         self.registry = registry
@@ -326,6 +328,8 @@ class DispatchApp(App[None]):
 
             workflow_store = WorkflowHistoryStore((history_path().parent if history_dir is None else history_dir.parent) / "workflow-history")
         self.workflow_history_runs = workflow_store.list_runs() if workflow_store is not None else []
+        if self.workflow_active_record is not None and self.workflow_active_record not in self.workflow_history_runs:
+            self.workflow_history_runs.insert(0, self.workflow_active_record)
         self._refresh()
         for index, run in enumerate(self.history_runs):
             await self.query_one("#content", VerticalScroll).mount(
@@ -569,6 +573,12 @@ class DispatchApp(App[None]):
         self.workflow_current = ""
         self.workflow_output = []
         self.workflow_spinner = 0
+        self.workflow_active_record = {
+            "status": "running",
+            "workflow": workflow.to_dict(),
+            "target_results": [],
+        }
+        self.workflow_history_runs = [self.workflow_active_record, *self.workflow_history_runs]
         self._start_spinner()
         self._refresh()
         try:
@@ -582,6 +592,9 @@ class DispatchApp(App[None]):
             )
         finally:
             self._stop_spinner()
+            if self.workflow_active_record is not None:
+                self.workflow_active_record["status"] = "completed" if all(item.outcome == "success" for item in self.workflow_results) else "failed"
+                self.workflow_active_record["target_results"] = [item.to_dict() for item in self.workflow_results]
         self.view = "workflow_results"
         self._refresh()
 
