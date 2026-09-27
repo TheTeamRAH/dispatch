@@ -2,7 +2,7 @@
 type: feature-specification
 title: Registered remote Bash workflows
 description: Add declarative, user-registered remote Bash workflows with ordered commands and optional persistent shell sessions.
-status: in-progress
+status: completed
 tags:
   - dispatch
   - workflows
