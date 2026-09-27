@@ -127,6 +127,8 @@ class DispatchApp(App[None]):
     .status-warning { color: #FFD700; }
     .status-error { color: #FF4500; }
     Input, SelectionList { border: round #A684E8; background: #000000; color: #f0eaff; }
+    #content TextArea { height: 6; border: round #A684E8; background: #000000; color: #f0eaff; }
+    #content TextArea:focus { border: round #C45AFF; }
     #content SelectionList { height: 4; }
     Input:focus, SelectionList:focus { border: round #C45AFF; }
     Button { background: #000000; color: #f0eaff; border: round #A684E8; }
@@ -349,9 +351,9 @@ class DispatchApp(App[None]):
             Input(value=workflow.name if workflow else "", placeholder="Display name", id="workflow-name", classes="form-control"),
             session,
             Label("Startup commands (optional, one command per line)", id="workflow-startup-label", classes="form-control"),
-            TextArea(startup, placeholder="Enter startup commands, one per line", id="workflow-startup-commands", classes="form-control"),
+            TextArea(startup, placeholder="Enter startup commands, one per line", read_only=False, id="workflow-startup-commands", classes="form-control"),
             Label("Workflow commands (one command per line)", id="workflow-commands-label", classes="form-control"),
-            TextArea(commands, placeholder="Enter workflow commands, one per line", id="workflow-commands", classes="form-control"),
+            TextArea(commands, placeholder="Enter workflow commands, one per line", read_only=False, id="workflow-commands", classes="form-control"),
             Button("Save workflow", id="save-workflow", classes="form-control"),
             Button("Cancel", id="cancel-workflow-form", classes="form-control"),
         )
