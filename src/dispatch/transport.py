@@ -45,6 +45,40 @@ class CompletedCommand:
     stderr: str
 
 
+class PersistentBashSession:
+    """Frame sequential commands through one remote Bash process."""
+
+    MARKER = "__DISPATCH_COMMAND_COMPLETE__"
+
+    def __init__(self, process: Any) -> None:
+        self.process = process
+
+    async def run(self, command: str) -> CompletedCommand:
+        marker = f"{self.MARKER}:{id(self)}"
+        self.process.stdin.write(f"{command}\nprintf '\\n{marker}:%s\\n' \"$?\"\n")
+        if hasattr(self.process.stdin, "drain"):
+            await self.process.stdin.drain()
+        lines: list[str] = []
+        while True:
+            line = await self.process.stdout.readline()
+            if not line:
+                raise ConnectionError("persistent Bash session ended unexpectedly")
+            text = line.rstrip("\\n")
+            if text.startswith(marker + ":"):
+                try:
+                    status = int(text.rsplit(":", 1)[1])
+                except ValueError as error:
+                    raise ConnectionError("invalid persistent Bash status marker") from error
+                return CompletedCommand(status, "".join(lines), "")
+            lines.append(line)
+
+    async def close(self) -> None:
+        self.process.stdin.write("exit\n")
+        if hasattr(self.process.stdin, "drain"):
+            await self.process.stdin.drain()
+        await self.process.wait()
+
+
 class SSHTransport:
     """Establish and retain a verified SSH connection for one target."""
 
@@ -121,6 +155,11 @@ class SSHTransport:
     def _connection_failure(error: Exception) -> str:
         reason = " ".join(str(error).split())[:200]
         return f"Unable to connect to the SSH target: {reason}" if reason else "Unable to connect to the SSH target."
+
+    async def open_bash_session(self, channel: AuthenticatedChannel) -> PersistentBashSession:
+        """Open a non-login Bash process without implicit startup files."""
+        process = await channel.connection.create_process("/bin/bash --noprofile --norc -s")
+        return PersistentBashSession(process)
 
     async def run(self, channel: AuthenticatedChannel, command: str) -> CompletedCommand:
         process = await channel.connection.run(command, check=False)

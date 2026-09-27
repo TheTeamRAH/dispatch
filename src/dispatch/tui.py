@@ -12,9 +12,10 @@ from textual.containers import Container, VerticalScroll
 from textual.events import Resize
 from textual.markup import escape
 from textual.screen import ModalScreen
-from textual.widgets import Button, Header, Input, Label, SelectionList, Static
+from textual.widgets import Button, Header, Input, Label, SelectionList, Static, TextArea
 
 from .models import CurrentRebootState, RebootForecast, TargetResult
+from .workflow_models import ShellStep, WorkflowDefinition
 
 
 class HistoryReader(Protocol):
@@ -80,6 +81,25 @@ class RemoveAllTargetsPrompt(ModalScreen[bool]):
         self.dismiss(False)
 
 
+class WorkflowRunPrompt(ModalScreen[bool]):
+    """Require deliberate confirmation before remote shell execution."""
+
+    def __init__(self, workflow: WorkflowDefinition, target_count: int) -> None:
+        super().__init__()
+        self.workflow = workflow
+        self.target_count = target_count
+
+    def compose(self) -> ComposeResult:
+        with Container(id="dialog"):
+            yield Label(f"Run {self.workflow.name} on {self.target_count} target(s) using {self.workflow.session} Bash session?")
+            yield Button("Run workflow", id="confirm-workflow")
+            yield Button("Cancel", id="cancel-workflow")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.dismiss(event.button.id == "confirm-workflow")
+
+
+
 class DispatchApp(App[None]):
     """Idle menu and result views; workflows can supply normalized results."""
 
@@ -127,8 +147,8 @@ class DispatchApp(App[None]):
     Screen.-compact #content { height: 1fr; }
     Screen.-compact #content SelectionList { height: 4; }
     Screen.-compact #status-pane, Screen.-compact #detail-pane { display: none; }
-    PasswordPrompt, PreflightFailurePrompt, RemoveAllTargetsPrompt { align: center middle; background: #000000; }
-    PasswordPrompt #dialog, PreflightFailurePrompt #dialog, RemoveAllTargetsPrompt #dialog { width: 70%; height: auto; padding: 1 2; background: #000000; border: round #C45AFF; }
+    PasswordPrompt, PreflightFailurePrompt, RemoveAllTargetsPrompt, WorkflowRunPrompt { align: center middle; background: #000000; }
+    PasswordPrompt #dialog, PreflightFailurePrompt #dialog, RemoveAllTargetsPrompt #dialog, WorkflowRunPrompt #dialog { width: 70%; height: auto; padding: 1 2; background: #000000; border: round #C45AFF; }
     Screen.-narrow #dialog { width: 100%; }
     """
     BINDINGS = [
@@ -136,11 +156,12 @@ class DispatchApp(App[None]):
         ("s", "saved", "Saved"),
         ("m", "manage", "Manage"),
         ("h", "history", "History"),
+        ("w", "workflows", "Workflows"),
         ("d", "toggle_details", "Details"),
         ("escape", "menu", "Menu"),
     ]
 
-    def __init__(self, results: Sequence[TargetResult] = (), history_store: HistoryReader | None = None, inspection_service=None, registry=None) -> None:
+    def __init__(self, results: Sequence[TargetResult] = (), history_store: HistoryReader | None = None, inspection_service=None, registry=None, workflow_registry=None, workflow_service=None) -> None:
         super().__init__()
         self.results = list(results)
         self.view = "summary" if results else "menu"
@@ -152,7 +173,11 @@ class DispatchApp(App[None]):
         self.inspection_worker = None
         self.inspection_service = inspection_service
         self.registry = registry
+        self.workflow_registry = workflow_registry
+        self.workflow_service = workflow_service
         self.saved_targets = []
+        self.saved_workflows = []
+        self.workflow_results = []
         self.management_message = ""
 
     def compose(self) -> ComposeResult:
@@ -225,6 +250,26 @@ class DispatchApp(App[None]):
                 Button(f"View {run.completed_at}", id=f"history-run-{index}", classes="form-control")
             )
 
+    async def action_workflows(self) -> None:
+        await self._clear_controls()
+        self.view = "workflows"
+        self.saved_workflows = self.workflow_registry.load() if self.workflow_registry is not None else []
+        self.saved_targets = self.registry.load() if self.registry is not None else []
+        self._refresh()
+        if self.saved_workflows:
+            choices = [(f"{item.name} ({item.session})", item.id) for item in self.saved_workflows]
+            await self.query_one("#content", VerticalScroll).mount(
+                SelectionList(*choices, id="saved-workflows", classes="form-control"),
+                Button("Run selected workflow", id="run-workflow", classes="form-control"),
+            )
+        await self.query_one("#content", VerticalScroll).mount(
+            Input(placeholder="New workflow ID", id="workflow-id", classes="form-control"),
+            Input(placeholder="Display name", id="workflow-name", classes="form-control"),
+            Input(placeholder="isolated or persistent", id="workflow-session", classes="form-control"),
+            TextArea(id="workflow-commands", classes="form-control"),
+            Button("Register workflow (one command per line)", id="save-workflow", classes="form-control"),
+        )
+
     async def action_menu(self) -> None:
         await self._clear_controls()
         self.view = "menu"
@@ -270,12 +315,51 @@ class DispatchApp(App[None]):
         if event.button.id in {"save-target", "edit-target", "remove-target"}:
             self._manage_target(event.button.id)
             return
+        if event.button.id == "save-workflow":
+            self._save_workflow()
+            return
+        if event.button.id == "run-workflow" and self.workflow_service is not None:
+            selected = set(self.query_one("#saved-workflows", SelectionList).selected)
+            workflows = [item for item in self.saved_workflows if item.id in selected]
+            if len(workflows) == 1 and self.saved_targets and await self.push_screen_wait(WorkflowRunPrompt(workflows[0], len(self.saved_targets))):
+                self.run_worker(self._run_workflow(workflows[0]), exclusive=True)
+            return
         if event.button.id != "inspect-saved" or self.inspection_service is None:
             return
         selected = set(self.query_one("#saved-targets", SelectionList).selected)
         targets = [target for target in self.saved_targets if target.id in selected]
         if targets:
             await self._start_inspection(targets)
+
+    def _save_workflow(self) -> None:
+        if self.workflow_registry is None:
+            self.management_message = "Workflow registry is unavailable."
+            self._refresh()
+            return
+        try:
+            workflow_id = self.query_one("#workflow-id", Input).value.strip()
+            name = self.query_one("#workflow-name", Input).value.strip()
+            session = self.query_one("#workflow-session", Input).value.strip() or "isolated"
+            commands = [line.strip() for line in self.query_one("#workflow-commands", TextArea).text.splitlines() if line.strip()]
+            steps = tuple(ShellStep(f"step-{index}", f"Step {index}", command) for index, command in enumerate(commands, 1))
+            self.workflow_registry.save(WorkflowDefinition(workflow_id, name, "shell", session, (), steps))
+            self.saved_workflows = self.workflow_registry.load()
+            self.management_message = f"Saved workflow {name}."
+        except ValueError as error:
+            self.management_message = str(error)
+        self._refresh()
+
+    async def _run_workflow(self, workflow: WorkflowDefinition) -> None:
+        self.view = "workflow_progress"
+        self.workflow_results = []
+        self._refresh()
+        await self.workflow_service.run(workflow, self.saved_targets, self._password_not_available, self._workflow_result)
+        self.view = "workflow_results"
+        self._refresh()
+
+    def _workflow_result(self, result) -> None:
+        self.workflow_results.append(result)
+        self._refresh()
 
     async def _remove_all_targets(self) -> None:
         if self.registry is None:
@@ -427,6 +511,9 @@ class DispatchApp(App[None]):
             "saved": "Select targets below.",
             "manage": "Manage targets below.",
             "history": "Select a persisted run below.",
+            "workflows": "Register or run a remote Bash workflow.",
+            "workflow_progress": "Workflow execution is in progress.",
+            "workflow_results": "Workflow execution results.",
             "history_detail": "Detailed history is on the right.",
             "progress": "Inspection progress is on the right.",
             "summary": "Detailed results are on the right.",
@@ -455,6 +542,18 @@ class DispatchApp(App[None]):
             return "\n".join(lines)
         if self.view == "history_detail":
             return self._summary(self.history_run.results, "Inspection history")
+        if self.view == "workflows":
+            workflows = "\n".join(f"{item.id}: {item.name} ({item.session})" for item in self.saved_workflows) or "No registered workflows."
+            return f"Remote Bash workflows\n\n{workflows}\n\nEnter one command per line to register a workflow. Persistent sessions preserve Bash state."
+        if self.view == "workflow_progress":
+            return "Workflow execution in progress\n\nCommands are running on the selected saved targets."
+        if self.view == "workflow_results":
+            lines = ["Workflow results", ""]
+            for result in self.workflow_results:
+                lines.append(f"{result.target['name']}: {result.outcome}")
+                for step in result.steps:
+                    lines.append(f"  {step.name}: {step.outcome} ({step.exit_status})")
+            return "\n".join(lines)
         if self.view == "progress":
             return self._summary(self.results, "Inspection in progress") + "\n\nConnecting and querying the selected target(s). No remote changes will be made."
         return self._summary(self.results)
