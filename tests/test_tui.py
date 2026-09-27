@@ -384,6 +384,20 @@ async def test_history_view_reads_local_store_without_starting_discovery() -> No
         assert app.discovery_started is False
 
 
+
+
+@pytest.mark.asyncio
+async def test_history_view_includes_workflow_runs() -> None:
+    class WorkflowHistory:
+        def list_runs(self):
+            return [{"workflow": {"name": "Deploy"}, "target_results": [{"target": {"name": "host-1"}, "outcome": "failed"}]}]
+
+    app = DispatchApp(workflow_history_store=WorkflowHistory())
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("h")
+        assert "Workflow — Deploy: host-1: failed" in displayed(app)
+
+
 @pytest.mark.asyncio
 async def test_history_run_exposes_persisted_target_summary_and_details() -> None:
     app = DispatchApp(history_store=History())

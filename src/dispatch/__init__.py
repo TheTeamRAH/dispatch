@@ -15,4 +15,5 @@ def main() -> None:
         registry=TargetRegistry(),
         workflow_registry=WorkflowRegistry(workflow_path()),
         workflow_service=WorkflowService(transport, workflow_history),
+        workflow_history_store=workflow_history,
     ).run()

@@ -163,14 +163,16 @@ class DispatchApp(App[None]):
         ("escape", "menu", "Menu"),
     ]
 
-    def __init__(self, results: Sequence[TargetResult] = (), history_store: HistoryReader | None = None, inspection_service=None, registry=None, workflow_registry=None, workflow_service=None) -> None:
+    def __init__(self, results: Sequence[TargetResult] = (), history_store: HistoryReader | None = None, inspection_service=None, registry=None, workflow_registry=None, workflow_service=None, workflow_history_store=None):
         super().__init__()
         self.results = list(results)
         self.view = "summary" if results else "menu"
         self.show_details = False
         self.discovery_started = False
         self.history_store = history_store
+        self.workflow_history_store = workflow_history_store
         self.history_runs: list[object] = []
+        self.workflow_history_runs: list[dict] = []
         self.history_run = None
         self.inspection_worker = None
         self.inspection_service = inspection_service
@@ -315,6 +317,7 @@ class DispatchApp(App[None]):
         await self._clear_controls()
         self.view = "history"
         self.history_runs = self.history_store.list_runs() if self.history_store is not None else []
+        self.workflow_history_runs = self.workflow_history_store.list_runs() if self.workflow_history_store is not None else []
         self._refresh()
         for index, run in enumerate(self.history_runs):
             await self.query_one("#content", VerticalScroll).mount(
@@ -808,11 +811,16 @@ class DispatchApp(App[None]):
             targets = "\n".join(f"{target.id}: {target.name} ({target.ssh_destination})" for target in self.saved_targets) or "No saved targets."
             return f"Manage saved targets\n\nSaved targets:\n{targets}\n\nEnter ID, display name, and destination to save or edit. Enter only ID to remove.{message}\n\nPress Esc to return to the menu."
         if self.view == "history":
-            if not self.history_runs:
-                return "Inspection history\n\nNo local history loaded.\n\nPress Esc to return to the menu."
-            lines = ["Inspection history", ""]
+            if not self.history_runs and not self.workflow_history_runs:
+                return "History\n\nNo local inspection or workflow history loaded.\n\nPress Esc to return to the menu."
+            lines = ["History", ""]
             for run in self.history_runs:
-                lines.append(f"{run.completed_at}: {len(run.results)} target(s)")
+                lines.append(f"Inspection — {run.completed_at}: {len(run.results)} target(s)")
+            for run in self.workflow_history_runs:
+                workflow = run.get("workflow", {})
+                targets = run.get("target_results", [])
+                outcomes = ", ".join(f"{item.get('target', {}).get('name', 'unknown')}: {item.get('outcome', 'unknown')}" for item in targets)
+                lines.append(f"Workflow — {workflow.get('name', 'unknown')}: {outcomes or 'no target results'}")
             lines.append("\nPress Esc to return to the menu.")
             return "\n".join(lines)
         if self.view == "history_detail":
