@@ -318,7 +318,14 @@ class DispatchApp(App[None]):
         await self._clear_controls()
         self.view = "history"
         self.history_runs = self.history_store.list_runs() if self.history_store is not None else []
-        self.workflow_history_runs = self.workflow_history_store.list_runs() if self.workflow_history_store is not None else []
+        workflow_store = self.workflow_history_store
+        history_dir = getattr(self.history_store, "path", None) if self.history_store is not None else None
+        if workflow_store is None:
+            from .stores import history_path
+            from .workflow_stores import WorkflowHistoryStore
+
+            workflow_store = WorkflowHistoryStore((history_path().parent if history_dir is None else history_dir.parent) / "workflow-history")
+        self.workflow_history_runs = workflow_store.list_runs() if workflow_store is not None else []
         self._refresh()
         for index, run in enumerate(self.history_runs):
             await self.query_one("#content", VerticalScroll).mount(
