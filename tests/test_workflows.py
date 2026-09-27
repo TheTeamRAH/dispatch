@@ -130,3 +130,27 @@ async def test_workflow_service_persists_each_completed_run(tmp_path: Path) -> N
     assert len(runs) == 1
     assert runs[0]["workflow"]["id"] == "deploy"
     assert runs[0]["target_results"][0]["outcome"] == "success"
+
+
+@pytest.mark.asyncio
+async def test_workflow_service_reports_connection_failures_to_ui(tmp_path: Path) -> None:
+    class Failure:
+        explanation = "SSH connection refused"
+
+    class Transport:
+        async def connect(self, target, password_provider):
+            return Failure()
+
+    reported = []
+    store = WorkflowHistoryStore(tmp_path / "history")
+    service = WorkflowService(Transport(), store)
+    result = await service.run(
+        workflow(),
+        [TargetSnapshot("one", "One", "one@host")],
+        lambda: None,
+        on_result=reported.append,
+    )
+
+    assert result[0].outcome == "failed"
+    assert reported[0].explanation == "SSH connection refused"
+    assert store.list_runs()[0]["target_results"][0]["explanation"] == "SSH connection refused"

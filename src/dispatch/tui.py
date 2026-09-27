@@ -832,8 +832,16 @@ class DispatchApp(App[None]):
             lines = ["Workflow results", ""]
             for result in self.workflow_results:
                 lines.append(f"{result.target['name']}: {result.outcome}")
+                if result.explanation:
+                    lines.append(f"  Error: {result.explanation}")
                 for step in result.steps:
-                    lines.append(f"  {step.name}: {step.outcome} ({step.exit_status})")
+                    lines.append(f"  {step.name}: {step.outcome} (exit {step.exit_status})")
+                    if step.explanation:
+                        lines.append(f"    {step.explanation}")
+                    if step.stdout:
+                        lines.extend(f"    stdout: {line}" for line in step.stdout.splitlines()[-8:])
+                    if step.stderr:
+                        lines.extend(f"    stderr: {line}" for line in step.stderr.splitlines()[-8:])
             return "\n".join(lines)
         if self.view == "progress":
             return self._summary(self.results, "Inspection in progress") + "\n\nConnecting and querying the selected target(s). No remote changes will be made."

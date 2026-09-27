@@ -101,7 +101,12 @@ class WorkflowService:
         async def run_target(target: TargetSnapshot) -> WorkflowTargetResult:
             connected = await self.transport.connect(target, password_provider)
             if not hasattr(connected, "connection"):
-                return WorkflowTargetResult(workflow.id, workflow.name, workflow.session, asdict(target), "failed", (), connected.explanation)
+                result = WorkflowTargetResult(workflow.id, workflow.name, workflow.session, asdict(target), "failed", (), connected.explanation)
+                if on_result is not None:
+                    callback = on_result(result)
+                    if inspect.isawaitable(callback):
+                        await callback
+                return result
             session = await self.transport.open_bash_session(connected) if workflow.session == "persistent" else _IsolatedSession(self.transport, connected)
             try:
                 result = await self.executor.execute(workflow, target, session, on_progress)
