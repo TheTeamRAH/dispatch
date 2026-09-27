@@ -441,15 +441,21 @@ class DispatchApp(App[None]):
                 return
             selected = set(self.query_one("#saved-workflows", SelectionList).selected)
             workflows = [item for item in self.saved_workflows if item.id in selected]
+            if event.button.id == "delete-workflow":
+                if not workflows:
+                    self.management_message = "Select at least one workflow."
+                    self._refresh()
+                    return
+                for workflow in workflows:
+                    self.workflow_registry.remove(workflow.id)
+                await self.action_workflows()
+                return
             if len(workflows) != 1:
-                self.management_message = "Select exactly one workflow."
+                self.management_message = "Select exactly one workflow to edit."
                 self._refresh()
                 return
             if event.button.id == "edit-workflow":
                 await self._open_workflow_form(workflows[0])
-            else:
-                self.workflow_registry.remove(workflows[0].id)
-                await self.action_workflows()
             return
         if event.button.id == "save-workflow":
             await self._save_workflow()

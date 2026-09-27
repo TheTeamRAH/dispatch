@@ -19,6 +19,7 @@ from dispatch.models import (
 from dispatch.transport import FailureKind, TransportFailure
 from dispatch.tui import DispatchApp, PasswordPrompt, PreflightFailurePrompt, RemoveAllTargetsPrompt
 from dispatch.workflow_stores import WorkflowRegistry
+from dispatch.workflow_models import ShellStep, WorkflowDefinition
 
 
 def result() -> TargetResult:
@@ -195,6 +196,22 @@ async def test_workflow_edit_and_delete_actions_are_separate_from_create(tmp_pat
         assert workflow_registry.load()[0].name == "Edited"
         app.query_one("#saved-workflows", SelectionList).select(workflow.id)
         await pilot.pause()
+        await app.on_button_pressed(Button.Pressed(app.query_one("#delete-workflow")))
+        assert workflow_registry.load() == []
+
+
+@pytest.mark.asyncio
+async def test_delete_removes_all_selected_workflows(tmp_path) -> None:
+    workflow_registry = WorkflowRegistry(tmp_path / "workflows")
+    workflow_registry.save(WorkflowDefinition("one", "One", steps=(ShellStep("step", "Step", "true"),)))
+    workflow_registry.save(WorkflowDefinition("two", "Two", steps=(ShellStep("step", "Step", "true"),)))
+    app = DispatchApp(registry=Registry(), workflow_registry=workflow_registry)
+
+    async with app.run_test(size=(120, 40)):
+        await app.action_workflows()
+        selector = app.query_one("#saved-workflows", SelectionList)
+        selector.select("one")
+        selector.select("two")
         await app.on_button_pressed(Button.Pressed(app.query_one("#delete-workflow")))
         assert workflow_registry.load() == []
 
