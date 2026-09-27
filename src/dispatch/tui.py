@@ -532,6 +532,8 @@ class DispatchApp(App[None]):
             name = self.query_one("#workflow-name", Input).value.strip()
             session = "persistent" if self.query_one("#persistent", RadioButton).value else "isolated"
             startup_commands = [line.strip() for line in self.query_one("#workflow-startup-commands", TextArea).text.splitlines() if line.strip()]
+            if startup_commands and session == "isolated":
+                raise ValueError("Startup commands require Persistent session mode so their aliases, functions, and environment are shared with workflow commands.")
             commands = [line.strip() for line in self.query_one("#workflow-commands", TextArea).text.splitlines() if line.strip()]
             startup = tuple(ShellStep(f"startup-{index}", f"Startup {index}", command) for index, command in enumerate(startup_commands, 1))
             steps = tuple(ShellStep(f"step-{index}", f"Step {index}", command) for index, command in enumerate(commands, 1))
