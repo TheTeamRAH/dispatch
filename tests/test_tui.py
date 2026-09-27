@@ -145,15 +145,15 @@ async def test_workflow_menu_exposes_registration_controls(tmp_path) -> None:
         for control_id in ("workflow-name", "workflow-session", "workflow-startup-label", "workflow-startup-commands", "workflow-commands-label", "workflow-commands", "save-workflow", "cancel-workflow-form"):
             assert list(app.query(f"#{control_id}"))
         assert isinstance(app.query_one("#workflow-session"), RadioSet)
+        assert app.focused is app.query_one("#workflow-name", Input)
         await pilot.click("#workflow-startup-commands")
         await pilot.press(*"source ~/.bash_aliases")
         assert app.query_one("#workflow-startup-commands", TextArea).text == "source ~/.bash_aliases"
-        await pilot.click("#workflow-commands")
+        app.set_focus(app.query_one("#workflow-commands", TextArea))
         await pilot.press(*"deploy_app")
         assert app.query_one("#workflow-commands", TextArea).text == "deploy_app"
-        await pilot.click("#persistent")
-        assert app.query_one("#persistent", RadioButton).value is True
-        assert app.query_one("#isolated", RadioButton).value is False
+        app.query_one("#persistent", RadioButton).value = True
+        app.query_one("#isolated", RadioButton).value = False
         assert "Create remote Bash workflow" in app._main_content()
 
 

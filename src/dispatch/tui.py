@@ -357,7 +357,7 @@ class DispatchApp(App[None]):
             Button("Save workflow", id="save-workflow", classes="form-control"),
             Button("Cancel", id="cancel-workflow-form", classes="form-control"),
         )
-        self.set_focus(self.query_one("#workflow-startup-commands", TextArea))
+        self.set_focus(self.query_one("#workflow-name", Input))
 
 
     async def action_menu(self) -> None:
