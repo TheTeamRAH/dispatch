@@ -14,4 +14,5 @@ sources:
 # Discovery lessons
 
 - [AsyncSSH transport integration lessons](asyncssh-transport.md) — safe SSH configuration, destination parsing, and command execution constraints.
+- [RPM discovery parser lessons](rpm-discovery.md) — strict parsing of mixed DNF/YUM update output.
 - [Textual pane layout lessons](textual-pane-layouts.md) — responsive pane sizing, stable widgets, and semantic status styling.

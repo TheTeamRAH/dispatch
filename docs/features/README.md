@@ -13,6 +13,7 @@ sources:
 
 | Date | Purpose | Spec | Author |
 | --- | --- | --- | --- |
+| 2026-10-31-01-26 | RPM discovery section-header handling | [Spec](2026-10-31-01-26-rpm-discovery-section-headers.md) | Hermes |
 | 2026-09-27-10-48 | Registered remote Bash workflows | [Spec](2026-09-27-10-48-registered-bash-workflows.md) | Hermes |
 | 2026-09-26-09-46 | Active workflow pane and progress feedback | [Spec](2026-09-26-09-46-active-workflow-progress-feedback.md) | OpenCode |
 | 2026-09-20-22-41 | Wide saved-target selector visibility | [Spec](2026-09-20-22-41-wide-saved-target-selector.md) | OpenCode |

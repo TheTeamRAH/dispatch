@@ -63,6 +63,22 @@ async def test_no_updates_ignores_locale_c_metadata_banner() -> None:
 
 
 @pytest.mark.asyncio
+async def test_updates_ignore_dnf_obsoleting_packages_header() -> None:
+    channel = Channel([
+        CompletedCommand(0, "/usr/bin/dnf\n"),
+        CompletedCommand(100, "Obsoleting Packages\n\nbash.x86_64 5.1.8-10.el9 baseos\n"),
+        CompletedCommand(0, "bash\t0:5.1.8-9.el9\tx86_64\n"),
+        CompletedCommand(0, ""),
+        CompletedCommand(0, ""),
+    ])
+    result = await RpmProvider().discover(TargetSnapshot(None, "host", "admin@host"), channel)
+    assert result.outcome is Outcome.SUCCESS
+    assert [(item.name, item.architecture, item.candidate_evr, item.repository) for item in result.packages] == [
+        ("bash", "x86_64", "5.1.8-10.el9", "baseos")
+    ]
+
+
+@pytest.mark.asyncio
 async def test_unknown_security_does_not_fail_package_discovery() -> None:
     channel = Channel([
         CompletedCommand(0, "/usr/bin/yum\n"), CompletedCommand(0, ""),

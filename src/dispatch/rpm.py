@@ -57,7 +57,7 @@ class RpmProvider:
     def _updates(output: str) -> list[tuple[str, str, str, str | None]]:
         rows = []
         for line in output.splitlines():
-            if not line.strip() or line.startswith("Last metadata expiration check:"):
+            if not line.strip() or line.startswith("Last metadata expiration check:") or line.strip() == "Obsoleting Packages":
                 continue
             fields = line.split()
             if len(fields) != 3 or "." not in fields[0]:
