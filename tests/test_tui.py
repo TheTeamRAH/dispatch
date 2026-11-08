@@ -129,6 +129,7 @@ async def test_initial_menu_is_idle_and_exposes_all_workflows() -> None:
         assert "Inventory (i)" in displayed(app)
         assert "History (h)" in displayed(app)
         assert "Workflows (w)" in displayed(app)
+        assert "Multi-panel (m)" in displayed(app)
         await pilot.press("h")
         assert app.view == "history"
 

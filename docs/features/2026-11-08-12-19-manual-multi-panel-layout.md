@@ -89,3 +89,7 @@ Out of scope:
 ## Validation
 
 Run the focused layout and TUI tests first, then the complete test suite. Review changed source, tests, documentation, and snapshots; run `git diff --check`; and verify the working tree contains no unrelated changes.
+
+## Amendments
+
+- Added `Multi-panel (m)` to the visible menu command list so the new layout binding is discoverable without relying on external documentation.

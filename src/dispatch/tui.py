@@ -851,7 +851,7 @@ class DispatchApp(App[None]):
 
     def _main_content(self) -> str:
         if self.view == "menu":
-            return "Dispatch\n\nAction (a)\nInventory (i)\nHistory (h)\nWorkflows (w)\n\nRead-only RPM update discovery."
+            return "Dispatch\n\nAction (a)\nInventory (i)\nHistory (h)\nWorkflows (w)\nMulti-panel (m)\n\nRead-only RPM update discovery."
         if self.view == "action":
             return "Choose an action\n\nSelect the operation before choosing its hosts.\n\nPress Esc to return to the menu."
         if self.view == "action_hosts":
