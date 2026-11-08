@@ -109,8 +109,8 @@ class DispatchApp(App[None]):
     Screen { layout: vertical; background: #000000; color: #f0eaff; }
     Header { background: #000000; color: #f0eaff; }
     #workspace { height: 1fr; layout: vertical; padding: 1; }
-    #pane-area { width: 1fr; height: 1fr; layout: horizontal; }
-    #left-panes { width: 1fr; height: 100%; layout: vertical; margin-right: 1; }
+    #pane-area { width: 1fr; height: 1fr; layout: vertical; }
+    #left-panes { width: 1fr; height: 1fr; layout: vertical; margin: 0; }
     #navigation-pane, #content, #detail-pane, #status-pane {
         background: #121212;
         border: round #C45AFF;
@@ -118,8 +118,8 @@ class DispatchApp(App[None]):
         padding: 1;
     }
     #navigation-pane { width: 1fr; height: 3; margin: 0 0 1 0; padding: 0 1; }
-    #content { width: 1fr; }
-    #detail-pane { width: 24; }
+    #content { width: 1fr; height: 1fr; }
+    #detail-pane { display: none; width: 1fr; height: 1fr; }
     #detail { width: 1fr; }
     #navigation { width: 1fr; }
     #status-pane { display: none; width: 1fr; }
@@ -134,23 +134,20 @@ class DispatchApp(App[None]):
     Input:focus, SelectionList:focus { border: round #C45AFF; }
     Button { background: #000000; color: #f0eaff; border: round #A684E8; }
     Button:focus { background: #000000; color: #FF69B4; border: round #C45AFF; }
-    #left-panes { width: 38; }
-    #content, #status-pane { height: 1fr; }
-    #status-pane { display: block; margin-top: 1; }
-    #detail-pane { width: 1fr; height: 1fr; }
     #navigation-pane, #content, #status-pane, #detail-pane {
         border-title-color: #A684E8;
         border-title-background: #121212;
         border-title-style: bold;
     }
+    Screen.-multi-panel #pane-area { layout: horizontal; }
+    Screen.-multi-panel #left-panes { width: 38; height: 100%; margin-right: 1; }
+    Screen.-multi-panel #content { width: 1fr; height: 1fr; }
+    Screen.-multi-panel #status-pane { display: block; height: 1fr; margin-top: 1; }
+    Screen.-multi-panel #detail-pane { display: block; width: 1fr; height: 1fr; }
     Screen.-compact #workspace { padding: 0; }
     Screen.-compact Header { display: none; }
     Screen.-compact #navigation-pane { height: 3; margin-bottom: 1; }
-    Screen.-compact #pane-area { layout: vertical; }
-    Screen.-compact #left-panes { width: 1fr; height: 1fr; margin: 0; }
-    Screen.-compact #content { height: 1fr; }
     Screen.-compact #content SelectionList { height: 4; }
-    Screen.-compact #status-pane, Screen.-compact #detail-pane { display: none; }
     PasswordPrompt, PreflightFailurePrompt, RemoveAllTargetsPrompt, WorkflowRunPrompt { align: center middle; background: #000000; }
     PasswordPrompt #dialog, PreflightFailurePrompt #dialog, RemoveAllTargetsPrompt #dialog, WorkflowRunPrompt #dialog { width: 70%; height: auto; padding: 1 2; background: #000000; border: round #C45AFF; }
     Screen.-narrow #dialog { width: 100%; }
@@ -161,6 +158,7 @@ class DispatchApp(App[None]):
         ("h", "history", "History"),
         ("w", "workflows", "Workflows"),
         ("d", "toggle_details", "Details"),
+        ("m", "toggle_layout", "Multi-panel"),
         ("escape", "menu", "Menu"),
     ]
 
@@ -169,6 +167,7 @@ class DispatchApp(App[None]):
         self.results = list(results)
         self.view = "summary" if results else "menu"
         self.show_details = False
+        self.multi_panel = False
         self.discovery_started = False
         self.history_store = history_store
         self.workflow_history_store = workflow_history_store
@@ -394,6 +393,11 @@ class DispatchApp(App[None]):
         if self.results or self.history_run is not None:
             self.show_details = not self.show_details
             self._refresh()
+
+    def action_toggle_layout(self) -> None:
+        self.multi_panel = not self.multi_panel
+        self._apply_responsive_classes()
+        self._refresh()
 
     def on_resize(self, event: Resize) -> None:
         self._apply_responsive_classes()
@@ -756,10 +760,11 @@ class DispatchApp(App[None]):
 
     def _apply_responsive_classes(self) -> None:
         self.screen.set_class(self.size.width <= 50, "-narrow")
-        self.screen.set_class(self._is_compact(), "-compact")
+        self.screen.set_class(self.size.height <= 30, "-compact")
+        self.screen.set_class(self.multi_panel, "-multi-panel")
 
     def _is_compact(self) -> bool:
-        return self.size.width <= 60 or self.size.height <= 30
+        return self.size.height <= 30
 
     def _navigation(self) -> str:
         if self.activity_override is not None and self.view != "progress":
@@ -816,6 +821,8 @@ class DispatchApp(App[None]):
         return ""
 
     def _content(self) -> str:
+        if not self.multi_panel:
+            return self._main_content()
         if self.view in {"workflow_progress", "workflow_results", "workflow_history_detail"} or (self._is_compact() and self.view in {"menu", "summary", "progress", "history_detail"}):
             return self._main_content()
         return self._posting_context()
@@ -844,7 +851,7 @@ class DispatchApp(App[None]):
 
     def _main_content(self) -> str:
         if self.view == "menu":
-            return "Dispatch\n\nAction (a)\nInventory (i)\nHistory (h)\nWorkflows (w)\n\nRead-only RPM update discovery."
+            return "Dispatch\n\nAction (a)\nInventory (i)\nHistory (h)\nWorkflows (w)\nMulti-panel (m)\n\nRead-only RPM update discovery."
         if self.view == "action":
             return "Choose an action\n\nSelect the operation before choosing its hosts.\n\nPress Esc to return to the menu."
         if self.view == "action_hosts":

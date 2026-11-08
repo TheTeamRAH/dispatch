@@ -129,6 +129,7 @@ async def test_initial_menu_is_idle_and_exposes_all_workflows() -> None:
         assert "Inventory (i)" in displayed(app)
         assert "History (h)" in displayed(app)
         assert "Workflows (w)" in displayed(app)
+        assert "Multi-panel (m)" in displayed(app)
         await pilot.press("h")
         assert app.view == "history"
 
@@ -291,6 +292,56 @@ async def test_delete_removes_all_selected_workflows(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_single_panel_is_the_default_at_all_viewport_heights() -> None:
+    for size in ((120, 40), (120, 20)):
+        app = DispatchApp(results=[result()])
+        async with app.run_test(size=size):
+            assert app.multi_panel is False
+            assert app.query_one("#status-pane").display is False
+            assert app.query_one("#detail-pane").display is False
+            assert app.query_one("#content").region.width > app.size.width // 2
+
+
+@pytest.mark.asyncio
+async def test_multi_panel_toggle_is_explicit_and_survives_resize() -> None:
+    app = DispatchApp(results=[result()])
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("m")
+        assert app.multi_panel is True
+        assert app.query_one("#status-pane").display is True
+        assert app.query_one("#detail-pane").display is True
+        assert app.query_one("#detail-pane").region.x > app.query_one("#content").region.x
+
+        await pilot.resize_terminal(120, 20)
+        assert app.multi_panel is True
+        assert app.query_one("#status-pane").display is True
+        assert app.query_one("#detail-pane").display is True
+
+        await pilot.press("m")
+        assert app.multi_panel is False
+        assert app.query_one("#status-pane").display is False
+        assert app.query_one("#detail-pane").display is False
+        assert "Pending updates: 1" in str(app.query_one("#view", Static).render())
+
+
+@pytest.mark.asyncio
+async def test_detail_toggle_remains_independent_of_layout_toggle() -> None:
+    app = DispatchApp(results=[result()])
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("m")
+        await pilot.press("d")
+        assert app.multi_panel is True
+        assert app.show_details is True
+        assert "kernel.x86_64" in str(app.query_one("#detail", Static).render())
+        await pilot.press("m")
+        assert app.multi_panel is False
+        assert app.show_details is True
+        assert "kernel.x86_64" in str(app.query_one("#view", Static).render())
+
+
+@pytest.mark.asyncio
 async def test_small_terminal_uses_one_main_posting_panel_for_full_results() -> None:
     app = DispatchApp(results=[result()])
 
@@ -319,7 +370,7 @@ async def test_small_terminal_keeps_menu_guide_and_saved_target_options_visible(
         await pilot.pause()
         selector = app.query_one("#saved-targets", SelectionList)
         assert selector.region.height >= 4
-        assert str(app.query_one("#view", Static).render()) == "Select targets below."
+        assert "Inspect saved targets" in str(app.query_one("#view", Static).render())
 
 
 @pytest.mark.asyncio
@@ -341,6 +392,7 @@ async def test_posting_split_places_navigation_above_left_context_and_right_deta
     app = DispatchApp(results=[result()])
 
     async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("m")
         await pilot.press("d")
         navigation = app.query_one("#navigation-pane", Static)
         content = app.query_one("#content")
@@ -367,6 +419,7 @@ async def test_posting_split_uses_horizontal_menu_and_clears_detail_status_on_na
     app = DispatchApp(results=[result()])
 
     async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.press("m")
         await pilot.press("d")
         navigation = str(app.query_one("#navigation-pane", Static).render())
         assert app._navigation() == "✓ Inspection complete"
