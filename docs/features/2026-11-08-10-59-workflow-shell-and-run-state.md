@@ -1,7 +1,7 @@
 ---
 type: feature-specification
 title: Consistent Bash workflow shell and run state
-status: in_progress
+status: completed
 description: Make registered Bash workflows load the intended profile in non-interactive execution and keep workflow progress, failure, and target counts accurate.
 tags:
   - workflows
@@ -77,13 +77,13 @@ Out of scope:
 
 ## Acceptance criteria
 
-- A focused regression test demonstrates that a persistent session can source the target-user profile and run a profile-defined alias/function under the intended user without an interactive shell consuming later workflow input.
-- A focused regression test demonstrates that a target with a non-zero command result produces a failed target result, skipped later steps, and a failed persisted workflow run.
-- A focused TUI regression test runs the same one-target workflow twice and asserts that each invocation has one target result, no stale prior result, and a terminal results view.
-- Existing tests plus the new focused tests pass in the repository's supported test environment.
-- `git diff --check` passes.
-- If configuration-management files are changed, every changed YAML file parses and every embedded Bash profile block passes `bash -n`; the relevant Ansible syntax check is run when Ansible is available.
-- No commit, push, deployment, or feature closeout is performed as part of this work unless separately requested.
+- [x] A focused regression test demonstrates that a persistent session can source the target-user profile and run a profile-defined alias/function under the intended user without an interactive shell consuming later workflow input.
+- [x] A focused regression test demonstrates that a target with a non-zero command result produces a failed target result, skipped later steps, and a failed persisted workflow run.
+- [x] A focused TUI regression test runs the same one-target workflow twice and asserts that each invocation has one target result, no stale prior result, and a terminal results view.
+- [x] Existing tests plus the new focused tests pass in the repository's supported test environment.
+- [x] `git diff --check` passes.
+- [x] If configuration-management files are changed, every changed YAML file parses and every embedded Bash profile block passes `bash -n`; the relevant Ansible syntax check is run when Ansible is available.
+- [x] No commit, push, deployment, or feature closeout is performed as part of this work unless separately requested.
 
 ## Implementation notes
 
