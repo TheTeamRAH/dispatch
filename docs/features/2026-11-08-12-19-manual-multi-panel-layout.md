@@ -2,7 +2,7 @@
 type: feature-specification
 title: Manual multi-panel layout toggle
 author: Hermes
-status: in_progress
+status: completed
 description: Make the Dispatch TUI use one full-size content panel by default and expose an explicit command for switching to the multi-panel layout.
 tags:
   - tui
@@ -66,12 +66,12 @@ Out of scope:
 
 ## Acceptance criteria
 
-- Focused TUI tests assert the default single-panel mode at both a wide/full-height viewport and a short viewport.
-- A focused TUI test presses `m`, verifies multi-panel visibility/geometry, resizes to a short viewport, and verifies multi-panel mode remains selected.
-- The same test presses `m` again and verifies the single-panel layout is restored without losing view state or result content.
-- A focused regression test verifies `d` still controls package details independently from `m`.
-- Existing TUI and complete repository test suites pass.
-- `git diff --check` passes.
+- [x] Focused TUI tests assert the default single-panel mode at both a wide/full-height viewport and a short viewport.
+- [x] A focused TUI test presses `m`, verifies multi-panel visibility/geometry, resizes to a short viewport, and verifies multi-panel mode remains selected.
+- [x] The same test presses `m` again and verifies the single-panel layout is restored without losing view state or result content.
+- [x] A focused regression test verifies `d` still controls package details independently from `m`.
+- [x] Existing TUI and complete repository test suites pass.
+- [x] `git diff --check` passes.
 
 ## Implementation notes
 
