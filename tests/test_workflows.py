@@ -132,7 +132,34 @@ async def test_workflow_service_persists_each_completed_run(tmp_path: Path) -> N
     assert runs[0]["target_results"][0]["outcome"] == "success"
 
 
+@pytest.mark.asyncio
+async def test_workflow_service_marks_run_failed_when_a_target_step_fails(tmp_path: Path) -> None:
+    class Connection:
+        connection = object()
 
+    class Transport:
+        async def connect(self, target, password_provider):
+            return Connection()
+
+        async def open_bash_session(self, connected):
+            class Session:
+                async def run(self, command):
+                    return CompletedCommand(7, "", "boom")
+
+                async def close(self):
+                    pass
+
+            return Session()
+
+        async def close(self, connected):
+            pass
+
+    store = WorkflowHistoryStore(tmp_path / "history")
+    service = WorkflowService(Transport(), store)
+    result = await service.run(workflow(), [TargetSnapshot("one", "One", "one@host")], lambda: None)
+
+    assert result[0].outcome == "failed"
+    assert store.list_runs()[0]["status"] == "failed"
 
 
 
