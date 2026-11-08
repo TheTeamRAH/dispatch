@@ -29,6 +29,7 @@ Synchronize dependencies with `uv sync --all-groups`, run tests with `uv run pyt
 | Date | Purpose | Spec | Author |
 | --- | --- | --- | --- |
 
+| 2026-11-08-10-59 | Consistent Bash workflow shell and run state | [Spec](docs/features/2026-11-08-10-59-workflow-shell-and-run-state.md) | Hermes |
 | 2026-10-31-01-26 | RPM discovery section-header handling | [Spec](docs/features/2026-10-31-01-26-rpm-discovery-section-headers.md) | Hermes |
 | 2026-09-27-10-48 | Registered remote Bash workflows | [Spec](docs/features/2026-09-27-10-48-registered-bash-workflows.md) | Hermes |
 | 2026-09-26-09-46 | Active workflow pane and progress feedback | [Spec](docs/features/2026-09-26-09-46-active-workflow-progress-feedback.md) | OpenCode |

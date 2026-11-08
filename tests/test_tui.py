@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 from textual.containers import VerticalScroll
@@ -184,9 +185,45 @@ async def test_registering_workflow_writes_ordered_commands_to_registry(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_workflow_output_does_not_render_streamed_stdout_twice() -> None:
+    app = DispatchApp()
+    target = TargetSnapshot("one", "One", "one@host")
+    step = ShellStep("step", "Step", "id")
+
+    async with app.run_test(size=(120, 40)):
+        app.view = "workflow_progress"
+        app._workflow_output(target, step, "uid=1(one)")
+        app._workflow_progress(target, step, SimpleNamespace(outcome="success", stdout="uid=1(one)\n", stderr=""))
+
+        assert sum("uid=1(one)" in line for line in app.workflow_output) == 1
+
+
+@pytest.mark.asyncio
+async def test_repeated_workflow_runs_reset_current_results() -> None:
+    workflow_definition = WorkflowDefinition("deploy", "Deploy", steps=(ShellStep("step", "Step", "true"),))
+    target = TargetSnapshot("one", "One", "one@host")
+    result = SimpleNamespace(target={"name": "One"}, outcome="success", explanation=None, steps=(), to_dict=lambda: {"target": {"name": "One"}, "outcome": "success", "steps": []})
+
+    class Service:
+        async def run(self, workflow, targets, password_provider, on_result, on_progress, on_output):
+            on_result(result)
+            return [result]
+
+    app = DispatchApp(workflow_service=Service())
+    async with app.run_test(size=(120, 40)):
+        await app._run_workflow(workflow_definition, [target])
+        await app._run_workflow(workflow_definition, [target])
+
+        assert app.view == "workflow_results"
+        assert len(app.workflow_results) == 1
+        assert len(app.workflow_active_record["target_results"]) == 1
+
+
+@pytest.mark.asyncio
 async def test_run_workflow_requires_host_selection(tmp_path) -> None:
     workflow_registry = WorkflowRegistry(tmp_path / "workflows")
     workflow_registry.save(WorkflowDefinition("deploy", "Deploy", steps=(ShellStep("step", "Step", "true"),)))
+
     class Service:
         async def run(self, workflow, targets, password_provider, on_result, on_progress, on_output):
             return []

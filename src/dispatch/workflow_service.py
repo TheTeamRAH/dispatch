@@ -134,7 +134,7 @@ class WorkflowService:
         history_handle = self.history_store.begin(run_record) if hasattr(self.history_store, "begin") else None
         try:
             results = await run_batch(targets, run_target)
-            status = "completed"
+            status = "completed" if results and all(result.outcome == "success" for result in results) else "failed"
         except asyncio.CancelledError:
             status = "cancelled"
             raise

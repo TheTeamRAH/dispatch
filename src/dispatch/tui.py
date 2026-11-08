@@ -187,6 +187,7 @@ class DispatchApp(App[None]):
         self.workflow_results = []
         self.workflow_current = ""
         self.workflow_output: list[str] = []
+        self.workflow_output_lines: dict[str, set[str]] = {}
         self.workflow_spinner = 0
         self.editing_workflow_id = None
         self.selected_workflow = None
@@ -572,6 +573,8 @@ class DispatchApp(App[None]):
         self.view = "workflow_progress"
         self.workflow_current = ""
         self.workflow_output = []
+        self.workflow_output_lines = {}
+        self.workflow_results = []
         self.workflow_spinner = 0
         self.workflow_active_record = {
             "status": "running",
@@ -609,13 +612,18 @@ class DispatchApp(App[None]):
             kind = "startup" if step.id.startswith("startup-") else "command"
             self.workflow_output.append(f"{target.name} / {kind} / {step.name}: {status}")
             if result.stdout:
-                self.workflow_output.extend(result.stdout.splitlines()[-8:])
+                seen = self.workflow_output_lines.setdefault(step.id, set())
+                for line in result.stdout.splitlines()[-8:]:
+                    if line not in seen:
+                        self.workflow_output.append(line)
+                        seen.add(line)
             if result.stderr:
                 self.workflow_output.extend(result.stderr.splitlines()[-8:])
         if self.view == "workflow_progress":
             self._refresh()
 
     def _workflow_output(self, target, step, line) -> None:
+        self.workflow_output_lines.setdefault(step.id, set()).add(line)
         self.workflow_output.append(f"{target.name} / {step.name}: {line.rstrip()}")
         if self.view == "workflow_progress":
             self._refresh()
