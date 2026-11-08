@@ -101,3 +101,8 @@ Out of scope:
 ## Validation
 
 Run the focused workflow and TUI tests first, then the complete test suite. Validate the rendered configuration-management profile and embedded Bash when that repository is included. Review the diff for scope, run `git diff --check`, and verify that no changes were made to external hosts.
+
+## Amendments
+
+- Operator testing confirmed that the existing configuration-management `compose` function is intended to be called with the command as its first argument (for example, `compose pull-all`). A no-argument `compose` step followed by a separate `pull-all` step is not the supported workflow contract, so the declined configuration-management PR #31 is not part of this feature.
+- The remaining remote profile-dependent workflow test is an operator-owned follow-up after using the command-bearing form; this Dispatch PR does not deploy configuration-management changes.
